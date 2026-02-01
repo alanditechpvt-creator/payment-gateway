@@ -97,7 +97,7 @@ export const transactionController = {
   },
   
   // Manual status update (after PG redirect completion)
-  async updateTransactionStatus(req: AuthRequest, res: Response, next: NextFunction) {
+  async updateTransactionStatus(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {
       const { transactionId } = req.params;
       const { status } = req.body;
@@ -125,7 +125,7 @@ export const transactionController = {
   },
   
   // Check status directly with Payment Gateway (OFFLINE mode - no webhook needed)
-  async checkStatusWithPG(req: AuthRequest, res: Response, next: NextFunction) {
+  async checkStatusWithPG(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {
       const { transactionId } = req.params;
       
@@ -277,7 +277,7 @@ export const transactionController = {
   },
   
   // Get rate breakdown for a transaction (including card type specific rates)
-  async getRateBreakdown(req: AuthRequest, res: Response, next: NextFunction) {
+  async getRateBreakdown(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {
       const { pgId } = req.params;
       const { amount, cardTypeCode } = req.query;
@@ -300,7 +300,7 @@ export const transactionController = {
   },
 
   // Public endpoint for payment links - no auth required
-  async getTransactionByIdPublic(req: AuthRequest, res: Response, next: NextFunction) {
+  async getTransactionByIdPublic(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {
       const { transactionId } = req.params;
       

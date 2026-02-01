@@ -9,7 +9,7 @@ export const razorpayController = {
   /**
    * Create a Razorpay order for a transaction
    */
-  async createOrder(req: AuthRequest, res: Response, next: NextFunction) {
+  async createOrder(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {
       const { transactionId, amount, description } = req.body;
       const userId = req.user!.userId;
@@ -34,7 +34,7 @@ export const razorpayController = {
         customerId: userId,
         customerName: `${transaction.initiator?.firstName || ''} ${transaction.initiator?.lastName || ''}`.trim(),
         customerEmail: transaction.initiator?.email,
-        customerPhone: transaction.initiator?.phone,
+        customerPhone: transaction.initiator?.phone || undefined,
         description: description || `Payment for transaction ${transactionId}`,
         notes: {
           transactionId,
@@ -76,7 +76,7 @@ export const razorpayController = {
   /**
    * Verify payment signature (called from frontend after payment)
    */
-  async verifyPayment(req: AuthRequest, res: Response, next: NextFunction) {
+  async verifyPayment(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {
       const { transactionId, razorpayPaymentId, razorpayOrderId, razorpaySignature } = req.body;
       const userId = req.user!.userId;
@@ -159,7 +159,7 @@ export const razorpayController = {
   /**
    * Webhook endpoint for Razorpay events
    */
-  async webhook(req: Request, res: Response, next: NextFunction) {
+  async webhook(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       // Get raw body for signature verification
       const rawBody = typeof req.body === 'string' ? req.body : JSON.stringify(req.body);
@@ -245,7 +245,7 @@ export const razorpayController = {
   /**
    * Get payment status
    */
-  async getPaymentStatus(req: AuthRequest, res: Response, next: NextFunction) {
+  async getPaymentStatus(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {
       const { transactionId } = req.params;
       const userId = req.user!.userId;
@@ -299,7 +299,7 @@ export const razorpayController = {
   /**
    * Process refund
    */
-  async refund(req: AuthRequest, res: Response, next: NextFunction) {
+  async refund(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {
       const { transactionId, amount } = req.body;
       const userId = req.user!.userId;
@@ -367,7 +367,7 @@ export const razorpayController = {
   /**
    * Get Razorpay configuration status (for admin)
    */
-  async getConfigStatus(req: AuthRequest, res: Response, next: NextFunction) {
+  async getConfigStatus(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {
       if (req.user!.role !== 'ADMIN') {
         return res.status(403).json({ success: false, error: 'Unauthorized' });

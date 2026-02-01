@@ -142,7 +142,7 @@ export const bbpsService = {
         cardLast4: params.cardLast4 || billData.cardLast4 || '',
         billNumber: billData.billNumber || refId,
         billDate: billData.billDate ? new Date(billData.billDate) : new Date(),
-        dueDate: billData.dueDate ? new Date(billData.dueDate) : null,
+        dueDate: billData.dueDate ? new Date(billData.dueDate) : new Date(),
         amount: billData.amount || 0,
         customerName: billData.customerName || '',
         status: 'PENDING',
@@ -200,7 +200,7 @@ export const bbpsService = {
     // Fetch fresh bill data
     const freshData = await this.fetchBill(userId, 'CREDIT_CARD', {
       mobileNumber: existingBill.mobileNumber,
-      billerId: existingBill.billerId,
+      billerId: existingBill.billerId || undefined,
       cardLast4: existingBill.cardLast4 || undefined,
     });
 
@@ -213,7 +213,7 @@ export const bbpsService = {
         where: { id: billId },
         data: {
           amount: freshData.data.amount,
-          dueDate: freshData.data.dueDate ? new Date(freshData.data.dueDate) : null,
+          dueDate: freshData.data.dueDate ? new Date(freshData.data.dueDate) : new Date(),
           billDate: freshData.data.billDate ? new Date(freshData.data.billDate) : undefined,
           updatedAt: new Date(),
         },

@@ -1,7 +1,8 @@
 import prisma from '../lib/prisma';
 import { CreateSchemaDTO, SchemaPGRateDTO, PaginationParams } from '../types';
 import { AppError } from '../middleware/errorHandler';
-import { UserRole } from '@prisma/client';
+// import { UserRole } from '@prisma/client';
+type UserRole = 'ADMIN' | 'WHITE_LABEL' | 'MASTER_DISTRIBUTOR' | 'DISTRIBUTOR' | 'RETAILER';
 import { Decimal } from '@prisma/client/runtime/library';
 
 export const schemaService = {
@@ -62,7 +63,7 @@ export const schemaService = {
       data: {
         name: data.name,
         description: data.description,
-        applicableRoles: data.applicableRoles,
+        applicableRoles: JSON.stringify(data.applicableRoles),
         isDefault: data.isDefault,
       },
     });
@@ -174,8 +175,8 @@ export const schemaService = {
           data: {
             schemaId,
             pgId: rate.pgId,
-            payinRate: new Decimal(rate.payinRate),
-            payoutRate: new Decimal(rate.payoutRate),
+            payinRate: Number(rate.payinRate),
+            payoutRate: Number(rate.payoutRate),
           },
         });
       }
@@ -192,12 +193,12 @@ export const schemaService = {
       create: {
         schemaId,
         pgId: rate.pgId,
-        payinRate: new Decimal(rate.payinRate),
-        payoutRate: new Decimal(rate.payoutRate),
+        payinRate: Number(rate.payinRate),
+        payoutRate: Number(rate.payoutRate),
       },
       update: {
-        payinRate: new Decimal(rate.payinRate),
-        payoutRate: new Decimal(rate.payoutRate),
+        payinRate: Number(rate.payinRate),
+        payoutRate: Number(rate.payoutRate),
       },
     });
     

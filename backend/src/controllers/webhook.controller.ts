@@ -9,7 +9,7 @@ export const webhookController = {
   /**
    * Handle Razorpay payment callback
    */
-  async razorpayCallback(req: Request, res: Response) {
+  async razorpayCallback(req: Request, res: Response): Promise<void> {
     try {
       logger.info('Razorpay webhook received');
       
@@ -100,7 +100,7 @@ export const webhookController = {
    * Handle Runpaisa payment callback
    * This is called by Runpaisa after payment completion
    */
-  async runpaisaCallback(req: Request, res: Response) {
+  async runpaisaCallback(req: Request, res: Response): Promise<void> {
     try {
       logger.info('Runpaisa webhook received:', JSON.stringify(req.body));
       
@@ -185,7 +185,7 @@ export const webhookController = {
   /**
    * Handle Cashfree payment callback
    */
-  async cashfreeCallback(req: Request, res: Response) {
+  async cashfreeCallback(req: Request, res: Response): Promise<void> {
     try {
       logger.info('Cashfree webhook received');
       logger.info('Cashfree webhook body:', JSON.stringify(req.body, null, 2));
@@ -279,7 +279,7 @@ export const webhookController = {
    * Manual status check endpoint
    * Can be used to verify transaction status with PG
    */
-  async checkStatus(req: Request, res: Response) {
+  async checkStatus(req: Request, res: Response): Promise<void> {
     try {
       const { orderId } = req.params;
 

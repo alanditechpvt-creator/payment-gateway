@@ -9,7 +9,7 @@ export const sabPaisaController = {
   /**
    * Render payment form for redirection
    */
-  async renderPaymentForm(req: Request, res: Response) {
+  async renderPaymentForm(req: Request, res: Response): Promise<void> {
     try {
       const { transactionId } = req.params;
 

@@ -11,7 +11,7 @@ export const cashfreeController = {
   /**
    * Create a Cashfree order for a transaction
    */
-  async createOrder(req: AuthRequest, res: Response, next: NextFunction) {
+  async createOrder(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {
       const { transactionId, amount, customerName, customerEmail, customerPhone } = req.body;
       const userId = req.user!.userId;
@@ -75,7 +75,7 @@ export const cashfreeController = {
   /**
    * Verify payment (called from frontend after payment)
    */
-  async verifyPayment(req: AuthRequest, res: Response, next: NextFunction) {
+  async verifyPayment(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {
       const { orderId } = req.body;
       
@@ -119,7 +119,7 @@ export const cashfreeController = {
   /**
    * Webhook Handler
    */
-  async webhook(req: Request, res: Response) {
+  async webhook(req: Request, res: Response): Promise<void> {
     try {
       const signature = req.headers['x-webhook-signature'] as string;
       const timestamp = req.headers['x-webhook-timestamp'] as string;
@@ -157,7 +157,7 @@ export const cashfreeController = {
   /**
    * Check Order Status (manual check)
    */
-  async getStatus(req: Request, res: Response) {
+  async getStatus(req: Request, res: Response): Promise<void> {
     try {
       const { orderId } = req.params;
 

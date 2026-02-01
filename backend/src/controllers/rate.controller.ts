@@ -59,7 +59,7 @@ export const rateController = {
   /**
    * Assign rate to a child user
    */
-  async assignRate(req: AuthRequest, res: Response, next: NextFunction) {
+  async assignRate(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {
       const { targetUserId, pgId, payinRate, payoutRate } = req.body;
       
@@ -87,7 +87,7 @@ export const rateController = {
   /**
    * Bulk assign rates to multiple children
    */
-  async bulkAssignRates(req: AuthRequest, res: Response, next: NextFunction) {
+  async bulkAssignRates(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {
       const { assignments } = req.body;
       
@@ -147,7 +147,7 @@ export const rateController = {
   /**
    * Preview commission calculation for a transaction amount
    */
-  async previewCommissions(req: AuthRequest, res: Response, next: NextFunction) {
+  async previewCommissions(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {
       const { pgId, amount, type } = req.body;
       
