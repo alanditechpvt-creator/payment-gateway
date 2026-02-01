@@ -1,0 +1,68 @@
+# Create .gitignore in the root directory
+@"
+# Dependencies
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Environment variables (IMPORTANT - never commit .env files!)
+.env
+.env.local
+.env.production
+.env.*.local
+backend/.env
+frontend/.env
+frontend/.env.local
+frontend/.env.production
+admin/.env
+admin/.env.local
+admin/.env.production
+mobile/.env
+
+# Database
+*.db
+*.db-journal
+dev.db
+prod.db
+prisma/dev.db
+
+# Build outputs
+dist/
+build/
+.next/
+out/
+
+# Logs
+logs/
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Prisma
+prisma/migrations/*_migration/
+
+# Uploads
+uploads/
+
+# PM2
+.pm2/
+
+# TypeScript
+*.tsbuildinfo
+
+# Testing
+coverage/
+.nyc_output/
+
+# Misc
+.turbo
+"@ | Out-File -FilePath .gitignore -Encoding utf8

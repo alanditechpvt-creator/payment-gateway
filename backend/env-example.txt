@@ -1,0 +1,112 @@
+# Backend .env.example (safe to commit)
+@"
+# ================================================================================
+# PAYMENT GATEWAY MANAGEMENT SYSTEM - BACKEND CONFIGURATION
+# ================================================================================
+# Copy this file to .env and update with your actual values
+# ================================================================================
+
+# Database
+DATABASE_URL="file:./dev.db"
+
+# JWT Authentication
+JWT_SECRET="your-jwt-secret-key-change-this-to-random-string"
+JWT_EXPIRES_IN="24h"
+JWT_REFRESH_SECRET="your-jwt-refresh-secret-change-this"
+JWT_REFRESH_EXPIRES_IN="30d"
+
+# Server
+PORT=4100
+NODE_ENV=development
+
+# CORS
+CORS_ORIGIN="http://localhost:5000,http://localhost:5002"
+
+# Payment Gateway Mode
+PG_MODE="ONLINE"
+PG_AUTO_CHECK_INTERVAL=0
+
+# Application URLs
+FRONTEND_URL="http://localhost:5000"
+ADMIN_URL="http://localhost:5002"
+BACKEND_URL="http://localhost:4100"
+
+# SMTP Configuration
+SMTP_HOST="smtp.gmail.com"
+SMTP_PORT=587
+SMTP_USER="your-email@gmail.com"
+SMTP_PASS="your-app-password"
+EMAIL_FROM="noreply@yourdomain.com"
+
+# Security
+CAPTCHA_ENABLED=true
+CAPTCHA_SITE_KEY="your-cloudflare-turnstile-site-key"
+CAPTCHA_SECRET_KEY="your-cloudflare-turnstile-secret-key"
+
+# Storage
+STORAGE_PROVIDER="local"
+IMAGE_COMPRESSION=true
+MAX_IMAGE_WIDTH=1920
+MAX_IMAGE_HEIGHT=1920
+IMAGE_QUALITY=80
+CACHE_DURATION=2592000
+MAX_FILE_SIZE=5242880
+UPLOAD_PATH="./uploads"
+
+# ================================================================================
+# PAYMENT GATEWAYS - Add your credentials
+# ================================================================================
+
+# Razorpay
+RAZORPAY_ENABLED=false
+RAZORPAY_KEY_ID="your-razorpay-key-id"
+RAZORPAY_KEY_SECRET="your-razorpay-key-secret"
+RAZORPAY_WEBHOOK_SECRET="your-razorpay-webhook-secret"
+
+# Cashfree
+CASHFREE_ENABLED=false
+CASHFREE_APP_ID="your-cashfree-app-id"
+CASHFREE_SECRET_KEY="your-cashfree-secret-key"
+CASHFREE_ENV="TEST"
+CASHFREE_CALLBACK_URL="https://yourdomain.com/api/webhooks/cashfree"
+
+# SabPaisa
+SABPAISA_ENABLED=false
+SABPAISA_PRODUCTION=false
+SABPAISA_CLIENT_CODE="your-client-code"
+SABPAISA_USERNAME="your-username"
+SABPAISA_PASSWORD="your-password"
+SABPAISA_AUTH_KEY="your-auth-key"
+SABPAISA_AUTH_IV="your-auth-iv"
+SABPAISA_CALLBACK_URL="https://yourdomain.com/api/sabpaisa/callback"
+
+# RunPaisa
+RUNPAISA_ENABLED=false
+RUNPAISA_CLIENT_ID="your-client-id"
+RUNPAISA_USERNAME="your-username"
+RUNPAISA_PASSWORD="your-password"
+RUNPAISA_CALLBACK_URL="https://yourdomain.com/api/webhooks/runpaisa"
+
+# BBPS
+BBPS_ENABLED=false
+BBPS_ACCESS_CODE="your-access-code"
+BBPS_WORKING_KEY="your-working-key"
+BBPS_AGENT_INSTITUTION_ID="your-institution-id"
+BBPS_AGENT_INSTITUTION_NAME="Your Institution Name"
+BBPS_AGENT_ID="your-agent-id"
+BBPS_PAYMENT_CHANNEL="AGT"
+BBPS_INSTITUTE_ID="your-institute-id"
+BBPS_ENDPOINT="production"
+"@ | Out-File -FilePath backend\.env.example -Encoding utf8
+
+# Frontend .env.example
+@"
+NEXT_PUBLIC_API_URL=http://localhost:4100/api
+NEXT_PUBLIC_BACKEND_URL=http://localhost:4100
+"@ | Out-File -FilePath frontend\.env.example -Encoding utf8
+
+# Admin .env.example
+@"
+NEXT_PUBLIC_API_URL=http://localhost:4100/api
+NEXT_PUBLIC_BACKEND_URL=http://localhost:4100
+"@ | Out-File -FilePath admin\.env.example -Encoding utf8

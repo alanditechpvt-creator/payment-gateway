@@ -1,0 +1,141 @@
+# ================================================================================
+# PAYMENT GATEWAY MANAGEMENT SYSTEM - BACKEND CONFIGURATION
+# ================================================================================
+# Copy this file to .env and update the values
+# ================================================================================
+
+# Database
+DATABASE_URL="file:./dev.db"
+
+# JWT Authentication
+JWT_SECRET="your-jwt-secret-key-change-this-to-random-string"
+JWT_EXPIRES_IN="24h"
+JWT_REFRESH_SECRET="your-jwt-refresh-secret-change-this"
+JWT_REFRESH_EXPIRES_IN="30d"
+
+# Server
+PORT=4100
+NODE_ENV=development
+
+# CORS (comma-separated list of allowed origins)
+CORS_ORIGIN="http://localhost:5000,http://localhost:5002"
+
+# ================================================================================
+# PAYMENT GATEWAY MODE CONFIGURATION
+# ================================================================================
+# ONLINE  = Use webhooks (requires public URL via ngrok or hosting)
+# OFFLINE = Use manual "Check Status" button (no public URL needed)
+# ================================================================================
+PG_MODE="OFFLINE"
+
+# Auto-check interval in seconds (0 = disabled, only manual check)
+# Set to 30 for polling every 30 seconds (optional)
+PG_AUTO_CHECK_INTERVAL=0
+
+# ================================================================================
+# RUNPAISA PAYMENT GATEWAY (UAT CREDENTIALS)
+# ================================================================================
+# Set to true to enable Runpaisa API calls, false to use mock payment links
+# Keep false until IP is whitelisted with Runpaisa
+RUNPAISA_ENABLED=false
+
+# ================================================================================
+# BBPS LIVE API CONFIGURATION
+# ================================================================================
+BBPS_ENABLED=true
+BBPS_CLIENT_ID=your-bbps-client-id
+BBPS_API_KEY=your-bbps-api-key
+BBPS_PARTNER_ID=your-bbps-partner-id
+BBPS_ENDPOINT=https://api.bbps.in/production
+BBPS_CHANNEL_ID=your-channel-id
+BBPS_SUB_MEMBER_ID=your-sub-member-id
+
+# Get these from Runpaisa support team
+RUNPAISA_CLIENT_ID="your-client-id"
+RUNPAISA_USERNAME="your-username"
+RUNPAISA_PASSWORD="your-password"
+
+# Callback URL (only needed for ONLINE mode)
+# For OFFLINE mode, this is not used
+RUNPAISA_CALLBACK_URL="http://localhost:4100/api/webhooks/runpaisa"
+
+# ================================================================================
+# APPLICATION URLs
+# ================================================================================
+FRONTEND_URL="http://localhost:5000"
+ADMIN_URL="http://localhost:5002"
+
+# ================================================================================
+# SECURITY CONFIGURATION
+# ================================================================================
+# These can also be configured via Admin Panel → Settings → Security
+
+# CAPTCHA: Cloudflare Turnstile (free, privacy-friendly)
+# Get keys from: https://dash.cloudflare.com/turnstile
+# Set to true to enable CAPTCHA verification for login
+CAPTCHA_ENABLED=true
+# CAPTCHA_SITE_KEY="your-turnstile-site-key"
+# CAPTCHA_SECRET_KEY="your-turnstile-secret-key"
+
+# Note: Additional security settings (lockout attempts, duration, etc.)
+# are stored in database and configurable via Admin Panel
+
+# ================================================================================
+# SMTP CONFIGURATION (Optional - for sending emails)
+# ================================================================================
+# If not configured, OTP will be logged to console
+# SMTP_HOST="smtp.gmail.com"
+# SMTP_PORT=587
+# SMTP_USER="your-email@gmail.com"
+# SMTP_PASS="your-app-password"
+# EMAIL_FROM="noreply@yourdomain.com"
+
+# ================================================================================
+# STORAGE CONFIGURATION (File Storage Optimization)
+# ================================================================================
+# Provider: local, s3, azure, gcs (default: local)
+STORAGE_PROVIDER="local"
+
+# Image Compression (default: true)
+IMAGE_COMPRESSION=true
+
+# Max image dimensions (images larger than this will be resized)
+MAX_IMAGE_WIDTH=1920
+MAX_IMAGE_HEIGHT=1920
+
+# Image quality for compression (1-100, default: 80)
+IMAGE_QUALITY=80
+
+# Cache duration in seconds for served files (default: 30 days)
+CACHE_DURATION=2592000
+
+# Max file size in bytes (default: 5MB)
+MAX_FILE_SIZE=5242880
+
+# Upload path (default: ./uploads)
+UPLOAD_PATH="./uploads"
+
+# ================================================================================
+# AWS S3 CONFIGURATION (Optional - for cloud storage)
+# ================================================================================
+# Uncomment and configure for S3 storage
+# S3_BUCKET="your-bucket-name"
+# S3_REGION="ap-south-1"
+# S3_ACCESS_KEY_ID="your-access-key"
+# S3_SECRET_ACCESS_KEY="your-secret-key"
+
+# ================================================================================
+# AZURE BLOB CONFIGURATION (Optional - for Azure storage)
+# ================================================================================
+# Uncomment and configure for Azure Blob storage
+# AZURE_CONTAINER_NAME="your-container-name"
+# AZURE_CONNECTION_STRING="your-connection-string"
+
+# ================================================================================
+# GOOGLE CLOUD STORAGE CONFIGURATION (Optional - for GCS)
+# ================================================================================
+# Uncomment and configure for Google Cloud Storage
+# GCS_BUCKET="your-bucket-name"
+# GCS_PROJECT_ID="your-project-id"
+# GCS_KEY_FILENAME="path/to/service-account-key.json"
+

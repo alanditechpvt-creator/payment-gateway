@@ -1,0 +1,8 @@
+{
+  "timestamp": "2026-01-31T16:05:40.696Z",
+  "url": "https://api.billavenue.com/billpay/extBillCntrl/billFetchRequest/xml",
+  "accessCode": "AVVE35JN22ZK88VCYW",
+  "xml": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<billFetchRequest>\n  <agentId>CC01CC01513515340681</agentId>\n  <billerId></billerId>\n  <agentDeviceInfo>\n    <ip>127.0.0.1</ip>\n    <initChannel>AGT</initChannel>\n  </agentDeviceInfo>\n  <customerInfo>\n    <customerMobile>9876543210</customerMobile>\n  </customerInfo>\n</billFetchRequest>",
+  "encRequestLength": 672,
+  "encRequestSample": "8c0d054088e3613b5ff166bc6bffaca1d1addc6272b6e95a60ce11cca817ab1551d2d680a7e529ef140406e885a668fad59a923125efa033d8e5d7632e87074815699c83892289e031cc72de98bccc82de48800c4070356c8f9f8e85ff047b1f7c5e545d"
+}

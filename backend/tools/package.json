@@ -1,0 +1,17 @@
+{
+  "name": "tools",
+  "version": "1.0.0",
+  "description": "This folder contains a small helper to sign and send a Cashfree webhook to your local backend (exposed via ngrok).",
+  "main": "sign-and-send.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "minimist": "^1.2.8",
+    "node-fetch": "^2.7.0"
+  }
+}

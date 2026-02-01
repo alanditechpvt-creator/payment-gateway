@@ -1,0 +1,671 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:./dev.db"
+}
+
+// ==================== USER & AUTH ====================
+
+model User {
+  id                    String          @id @default(uuid())
+  email                 String          @unique
+  password              String
+  role                  String          // ADMIN, WHITE_LABEL, MASTER_DISTRIBUTOR, DISTRIBUTOR, RETAILER
+  status                String          @default("PENDING_ONBOARDING")
+  
+  // Profile Information
+  firstName             String?
+  lastName              String?
+  phone                 String?
+  businessName          String?
+  profilePhoto          String?
+  
+  // Hierarchy
+  parentId              String?
+  parent                User?           @relation("UserHierarchy", fields: [parentId], references: [id])
+  children              User[]          @relation("UserHierarchy")
+  
+  // KYC Information
+  panNumber             String?
+  panVerified           String          @default("PENDING")
+  aadhaarNumber         String?
+  aadhaarFront          String?
+  aadhaarBack           String?
+  aadhaarVerified       String          @default("PENDING")
+  emailVerified         Boolean         @default(false)
+  
+  // Onboarding
+  onboardingToken       String?         @unique
+  onboardingTokenExpiry DateTime?
+  
+  // Email OTP
+  emailOtp              String?
+  emailOtpExpiry        DateTime?
+  
+  // Schema/Plan Assignment
+  schemaId              String?
+  schema                Schema?         @relation(fields: [schemaId], references: [id])
+  
+  // Security - Failed Login Tracking
+  failedLoginAttempts   Int             @default(0)
+  lastFailedLogin       DateTime?
+  lockedUntil           DateTime?
+  lockedReason          String?
+  
+  // Timestamps
+  createdAt             DateTime        @default(now())
+  updatedAt             DateTime        @updatedAt
+  lastLoginAt           DateTime?
+  
+  // Relations
+  wallet                Wallet?
+  permissions           UserPermission[]
+  pgAssignments         UserPGAssignment[]
+  pgRates               UserPGRate[]     @relation("UserRates")        // Rates assigned TO this user
+  assignedRates         UserPGRate[]     @relation("RatesAssigned")    // Rates assigned BY this user
+  cardTypeRates         UserCardTypeRate[] @relation("UserCardTypeRates")  // Card type rates assigned TO this user
+  assignedCardTypeRates UserCardTypeRate[] @relation("CardTypeRatesAssigned") // Card type rates assigned BY this user
+  
+  // Performance indexes for user queries
+  @@index([role])
+  @@index([status])
+  @@index([parentId])
+  @@index([schemaId])
+  @@index([createdAt])
+  @@index([role, status])
+  @@index([parentId, role])
+  transactionsInitiated Transaction[]   @relation("TransactionInitiator")
+  commissions           CommissionTransaction[]
+  createdSchemas        Schema[]        @relation("SchemaCreator")
+  refreshTokens         RefreshToken[]
+  auditLogs             AuditLog[]
+  notifications         Notification[]
+  beneficiaries         Beneficiary[]
+  announcements         Announcement[] @relation("AnnouncementCreator")
+}
+
+model RefreshToken {
+  id          String   @id @default(uuid())
+  token       String   @unique
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt   DateTime
+  createdAt   DateTime @default(now())
+}
+
+// ==================== PERMISSIONS ====================
+
+model UserPermission {
+  id                    String   @id @default(uuid())
+  userId                String   @unique
+  user                  User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  // Permission Flags
+  canCreateUsers        Boolean  @default(false)
+  canManageWallet       Boolean  @default(false)
+  canTransferWallet     Boolean  @default(false)
+  canCreateSchema       Boolean  @default(false)
+  canViewReports        Boolean  @default(true)
+  canManagePG           Boolean  @default(false)
+  canApproveUsers       Boolean  @default(false)
+  canViewTransactions   Boolean  @default(true)
+  canInitiatePayin      Boolean  @default(false)
+  canInitiatePayout     Boolean  @default(false)
+  canAssignRates        Boolean  @default(false)  // WL & MD can assign rates to downstream
+  
+  // Custom permissions JSON for extensibility
+  customPermissions     String?
+  
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+}
+
+// ==================== WALLET ====================
+
+model Wallet {
+  id              String              @id @default(uuid())
+  userId          String              @unique
+  user            User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  balance         Float               @default(0)
+  holdBalance     Float               @default(0)
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
+  
+  transactions    WalletTransaction[]
+}
+
+model WalletTransaction {
+  id              String   @id @default(uuid())
+  walletId        String
+  wallet          Wallet   @relation(fields: [walletId], references: [id])
+  type            String   // CREDIT, DEBIT, COMMISSION, TRANSFER_IN, TRANSFER_OUT, REFUND
+  amount          Float
+  balanceBefore   Float
+  balanceAfter    Float
+  description     String?
+  referenceId     String?
+  referenceType   String?
+  createdAt       DateTime @default(now())
+  
+  // Performance indexes for ledger queries
+  @@index([walletId])
+  @@index([type])
+  @@index([createdAt])
+  @@index([walletId, createdAt])
+  @@index([walletId, type])
+}
+
+// ==================== PAYMENT GATEWAY ====================
+
+model PaymentGateway {
+  id              String              @id @default(uuid())
+  name            String              @unique
+  code            String              @unique
+  description     String?
+  
+  // Is this an aggregator (like Runpaisa) with internal PGs?
+  isAggregator    Boolean             @default(false)
+  
+  // Configuration (encrypted in production)
+  apiKey          String?
+  apiSecret       String?
+  merchantId      String?
+  webhookSecret   String?
+  configuration   String?
+  
+  // Status
+  isActive        Boolean             @default(true)
+  supportedTypes  String              @default("PAYIN,PAYOUT")
+  
+  // Default Rate Configuration (used when no card type specific rate)
+  baseRate        Float               @default(0.02)
+  minAmount       Float?
+  maxAmount       Float?
+  
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
+  
+  transactions    Transaction[]
+  userAssignments UserPGAssignment[]
+  schemaRates     SchemaPGRate[]
+  userRates       UserPGRate[]        @relation("PGUserRates")
+  cardTypes       CardType[]          // Card types for this PG
+}
+
+// Card Type - For PG-specific card types with different rates
+// Examples: payu_visa-normal, payu_visa-corporate, cashfree_master-normal
+model CardType {
+  id              String              @id @default(uuid())
+  pgId            String
+  paymentGateway  PaymentGateway      @relation(fields: [pgId], references: [id], onDelete: Cascade)
+  
+  // Card type identifier (received from PG response)
+  code            String              // e.g., "payu_visa-normal", "cashfree_master-corporate"
+  name            String              // e.g., "PayU VISA Normal", "Cashfree Master Corporate"
+  description     String?
+  
+  // Internal PG info (for aggregators like Runpaisa)
+  internalPG      String?             // e.g., "payu", "cashfree", "razorpay"
+  cardNetwork     String?             // e.g., "VISA", "MASTER", "RUPAY", "AMEX"
+  cardCategory    String?             // e.g., "NORMAL", "CORPORATE", "PREMIUM", "PLATINUM"
+  
+  // Base rate for this card type (PG's cost)
+  baseRate        Float               @default(0.02)
+  
+  isActive        Boolean             @default(true)
+  
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
+  
+  schemaRates     SchemaCardTypeRate[]
+  userRates       UserCardTypeRate[]
+  transactions    Transaction[]       @relation("TransactionCardType")
+  
+  @@unique([pgId, code])
+  @@index([pgId])
+  @@index([code])
+  @@index([internalPG])
+  @@index([cardNetwork])
+}
+
+// Schema-level rates for each card type
+model SchemaCardTypeRate {
+  id              String              @id @default(uuid())
+  schemaId        String
+  schema          Schema              @relation(fields: [schemaId], references: [id], onDelete: Cascade)
+  cardTypeId      String
+  cardType        CardType            @relation(fields: [cardTypeId], references: [id], onDelete: Cascade)
+  
+  // Rate for this schema + card type combination
+  payinRate       Float               @default(0.02)
+  
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
+  
+  @@unique([schemaId, cardTypeId])
+  @@index([schemaId])
+  @@index([cardTypeId])
+}
+
+// User-level rates for each card type (hierarchical markup)
+model UserCardTypeRate {
+  id              String              @id @default(uuid())
+  userId          String
+  user            User                @relation("UserCardTypeRates", fields: [userId], references: [id], onDelete: Cascade)
+  cardTypeId      String
+  cardType        CardType            @relation(fields: [cardTypeId], references: [id], onDelete: Cascade)
+  
+  // Who assigned this rate
+  assignedById    String
+  assignedBy      User                @relation("CardTypeRatesAssigned", fields: [assignedById], references: [id])
+  
+  // Rate for this user + card type
+  payinRate       Float               @default(0)
+  
+  isEnabled       Boolean             @default(true)
+  
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
+  
+  @@unique([userId, cardTypeId])
+  @@index([userId])
+  @@index([cardTypeId])
+  @@index([assignedById])
+}
+
+model UserPGAssignment {
+  id              String          @id @default(uuid())
+  userId          String
+  user            User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  pgId            String
+  paymentGateway  PaymentGateway  @relation(fields: [pgId], references: [id])
+  
+  isEnabled       Boolean         @default(true)
+  customRate      Float?
+  
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  
+  @@unique([userId, pgId])
+}
+
+// Hierarchical Rate Assignment - Each user has rates assigned by their parent
+model UserPGRate {
+  id              String          @id @default(uuid())
+  
+  // The user who this rate applies to
+  userId          String
+  user            User            @relation("UserRates", fields: [userId], references: [id], onDelete: Cascade)
+  
+  // The PG this rate is for
+  pgId            String
+  paymentGateway  PaymentGateway  @relation("PGUserRates", fields: [pgId], references: [id])
+  
+  // Who assigned this rate (parent user or Admin)
+  assignedById    String
+  assignedBy      User            @relation("RatesAssigned", fields: [assignedById], references: [id])
+  
+  // The rate this user is charged for transactions (percentage, e.g., 0.015 = 1.5%)
+  payinRate       Float           @default(0)
+  payoutRate      Float           @default(0)
+  
+  // Is this PG enabled for this user
+  isEnabled       Boolean         @default(true)
+  
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  
+  @@unique([userId, pgId])
+  @@index([assignedById])
+}
+
+// ==================== SCHEMA (MEMBERSHIP PLANS) ====================
+
+model Schema {
+  id              String          @id @default(uuid())
+  name            String
+  code            String          @unique
+  description     String?
+  
+  // Who created this schema
+  createdById     String
+  createdBy       User            @relation("SchemaCreator", fields: [createdById], references: [id])
+  
+  // Applicable to which roles (comma separated)
+  applicableRoles String          @default("RETAILER")
+  
+  isActive        Boolean         @default(true)
+  isDefault       Boolean         @default(false)
+  
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  
+  users           User[]
+  pgRates         SchemaPGRate[]
+  cardTypeRates   SchemaCardTypeRate[]  // Rates per card type for this schema
+}
+
+model SchemaPGRate {
+  id              String          @id @default(uuid())
+  schemaId        String
+  schema          Schema          @relation(fields: [schemaId], references: [id], onDelete: Cascade)
+  pgId            String
+  paymentGateway  PaymentGateway  @relation(fields: [pgId], references: [id])
+  
+  // Commission rates for PAYIN (percentage based)
+  payinRate       Float           @default(0.02)
+  
+  // Payout charge type: 'PERCENTAGE' or 'SLAB'
+  payoutChargeType String         @default("SLAB")
+  payoutRate      Float           @default(0.02) // Used if payoutChargeType is PERCENTAGE
+  
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  
+  // Payout slabs for this schema-PG combination
+  payoutSlabs     PayoutSlab[]
+  
+  @@unique([schemaId, pgId])
+}
+
+// Payout charge slabs (flat fee based on amount range)
+model PayoutSlab {
+  id              String          @id @default(uuid())
+  schemaPGRateId  String
+  schemaPGRate    SchemaPGRate    @relation(fields: [schemaPGRateId], references: [id], onDelete: Cascade)
+  
+  minAmount       Float           // Minimum amount for this slab (inclusive)
+  maxAmount       Float?          // Maximum amount for this slab (inclusive, null = unlimited)
+  flatCharge      Float           // Flat fee for this slab
+  
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  
+  @@index([schemaPGRateId])
+}
+
+// ==================== SYSTEM SETTINGS ====================
+
+model SystemSettings {
+  id                    String          @id @default(uuid())
+  key                   String          @unique
+  value                 String
+  description           String?
+  category              String          @default("GENERAL")  // SECURITY, GENERAL, NOTIFICATION, etc.
+  dataType              String          @default("STRING")   // STRING, NUMBER, BOOLEAN, JSON
+  isEditable            Boolean         @default(true)
+  
+  createdAt             DateTime        @default(now())
+  updatedAt             DateTime        @updatedAt
+  updatedBy             String?         // Admin who last updated
+  
+  @@index([category])
+  @@index([key])
+}
+
+// Login attempt log for audit
+model LoginAttempt {
+  id                    String          @id @default(uuid())
+  email                 String
+  ipAddress             String?
+  userAgent             String?
+  success               Boolean
+  failureReason         String?
+  captchaVerified       Boolean         @default(false)
+  
+  createdAt             DateTime        @default(now())
+  
+  @@index([email])
+  @@index([ipAddress])
+  @@index([createdAt])
+}
+
+// ==================== BENEFICIARY ====================
+
+model Beneficiary {
+  id              String        @id @default(uuid())
+  userId          String
+  user            User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  // Beneficiary Details
+  name            String
+  nickName        String?
+  accountNumber   String
+  ifscCode        String
+  bankName        String?
+  accountType     String        @default("SAVINGS") // SAVINGS, CURRENT
+  
+  // Contact Details
+  email           String?
+  phone           String?
+  
+  // Verification Status
+  isVerified      Boolean       @default(false)
+  verifiedAt      DateTime?
+  
+  // Status
+  isActive        Boolean       @default(true)
+  
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+  
+  // Relations
+  transactions    Transaction[] @relation("BeneficiaryTransactions")
+  
+  @@unique([userId, accountNumber, ifscCode])
+}
+
+// ==================== TRANSACTIONS ====================
+
+model Transaction {
+  id                  String    @id @default(uuid())
+  transactionId       String    @unique
+  type                String    // PAYIN, PAYOUT
+  status              String    @default("PENDING")
+  
+  // Amounts
+  amount              Float
+  pgCharges           Float     @default(0)
+  platformCommission  Float     @default(0)
+  netAmount           Float
+  
+  // User who initiated
+  initiatorId         String
+  initiator           User      @relation("TransactionInitiator", fields: [initiatorId], references: [id])
+  
+  // Payment Gateway
+  pgId                String
+  paymentGateway      PaymentGateway @relation(fields: [pgId], references: [id])
+  pgTransactionId     String?
+  pgResponse          String?
+  
+  // Card Type (for card-specific rates)
+  cardTypeId          String?
+  cardType            CardType?  @relation("TransactionCardType", fields: [cardTypeId], references: [id])
+  cardTypeCode        String?    // Denormalized for quick access (e.g., "payu_visa-corporate")
+  
+  // Card/Payment Details (masked)
+  cardLast4           String?
+  cardNetwork         String?
+  paymentMethod       String?
+  
+  // Customer Details
+  customerName        String?
+  customerEmail       String?
+  customerPhone       String?
+  
+  // Beneficiary (for PAYOUT)
+  beneficiaryId       String?
+  beneficiary         Beneficiary? @relation("BeneficiaryTransactions", fields: [beneficiaryId], references: [id])
+  beneficiaryName     String?
+  beneficiaryAccount  String?
+  beneficiaryIfsc     String?
+  
+  // Timestamps
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+  completedAt         DateTime?
+  
+  // Relations
+  commissions         CommissionTransaction[]
+  
+  // Performance indexes for transaction queries
+  @@index([initiatorId])
+  @@index([pgId])
+  @@index([status])
+  @@index([type])
+  @@index([createdAt])
+  @@index([initiatorId, status])
+  @@index([initiatorId, type])
+  @@index([pgId, status])
+  @@index([pgId, createdAt])
+  @@index([cardTypeId])
+  @@index([cardTypeCode])
+}
+
+model CommissionTransaction {
+  id              String        @id @default(uuid())
+  transactionId   String
+  transaction     Transaction   @relation(fields: [transactionId], references: [id])
+  
+  userId          String
+  user            User          @relation(fields: [userId], references: [id])
+  
+  level           Int
+  rate            Float
+  amount          Float
+  
+  creditedAt      DateTime?
+  createdAt       DateTime      @default(now())
+}
+
+// ==================== AUDIT & NOTIFICATIONS ====================
+
+model AuditLog {
+  id          String   @id @default(uuid())
+  userId      String?
+  user        User?    @relation(fields: [userId], references: [id])
+  action      String
+  entityType  String
+  entityId    String?
+  oldValue    String?
+  newValue    String?
+  ipAddress   String?
+  userAgent   String?
+  createdAt   DateTime @default(now())
+}
+
+model Notification {
+  id          String   @id @default(uuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title       String
+  message     String
+  type        String
+  isRead      Boolean  @default(false)
+  metadata    String?
+  createdAt   DateTime @default(now())
+}
+
+// Broadcast announcements / News ticker for dashboard
+model Announcement {
+  id              String    @id @default(uuid())
+  title           String
+  message         String
+  type            String    @default("INFO") // INFO, WARNING, ALERT, PROMO
+  priority        Int       @default(0) // Higher = more important
+  
+  // Target audience
+  targetRoles     String    @default("ALL") // ALL, WHITE_LABEL, MASTER_DISTRIBUTOR, DISTRIBUTOR, RETAILER (comma-separated)
+  targetUserIds   String?   // Specific user IDs (comma-separated), null = all users matching roles
+  
+  // Scheduling
+  isActive        Boolean   @default(true)
+  startDate       DateTime  @default(now())
+  endDate         DateTime?
+  
+  // Styling
+  bgColor         String?   // Custom background color
+  textColor       String?   // Custom text color
+  icon            String?   // Icon name
+  
+  // Tracking
+  createdById     String
+  createdBy       User      @relation("AnnouncementCreator", fields: [createdById], references: [id])
+  viewCount       Int       @default(0)
+  
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  
+  @@index([isActive])
+  @@index([startDate, endDate])
+  @@index([targetRoles])
+}
+
+// ==================== EMAIL TEMPLATES ====================
+
+model EmailTemplate {
+  id          String   @id @default(uuid())
+  code        String   @unique
+  name        String
+  subject     String
+  body        String
+  variables   String   @default("")
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+// ==================== BBPS BILL STORAGE ====================
+
+model CachedBill {
+  id                String   @id @default(uuid())
+  userId            String
+  category          String   // CREDIT_CARD, ELECTRICITY, etc.
+  mobileNumber      String
+  cardLast4         String?
+  accountNumber     String?
+  
+  // Bill Details
+  billerName        String
+  billerId          String?
+  amount            Float
+  dueDate           DateTime
+  billDate          DateTime
+  billNumber        String
+  customerName      String?
+  status            String   @default("PENDING") // PENDING, PAID, EXPIRED
+  
+  // Raw Response
+  rawResponse       String?  // JSON string of full BBPS response
+  
+  // Metadata
+  fetchedAt         DateTime @default(now())
+  expiresAt         DateTime // When to refresh
+  lastRefreshedAt   DateTime @default(now())
+  refreshCount      Int      @default(0)
+  
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  
+  @@index([userId, category])
+  @@index([mobileNumber, cardLast4])
+  @@index([dueDate])
+  @@index([expiresAt])
+  @@unique([userId, mobileNumber, cardLast4, billNumber])
+}
+
+// ==================== SYSTEM CONFIGURATION ====================
+
+model SystemConfig {
+  id          String   @id @default(uuid())
+  key         String   @unique
+  value       String
+  description String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+

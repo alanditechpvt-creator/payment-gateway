@@ -1,0 +1,35 @@
+# Database
+DATABASE_URL="postgresql://user:password@localhost:5432/payment_gateway?schema=public"
+
+# JWT
+JWT_SECRET="your-super-secret-jwt-key-change-in-production"
+JWT_REFRESH_SECRET="your-refresh-token-secret-change-in-production"
+JWT_EXPIRES_IN="15m"
+JWT_REFRESH_EXPIRES_IN="7d"
+
+# Server
+PORT=3001
+NODE_ENV=development
+CORS_ORIGIN=http://localhost:3000,http://localhost:3002
+
+# Email (SMTP)
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+SMTP_USER=your-email@gmail.com
+SMTP_PASS=your-app-password
+EMAIL_FROM="PaymentGateway <noreply@newweb.com>"
+
+# Admin
+ADMIN_EMAIL=admin@newweb.com
+ADMIN_PASSWORD=Admin@123456
+
+# File Upload
+UPLOAD_PATH=./uploads
+MAX_FILE_SIZE=5242880
+
+# Frontend URLs
+MAIN_APP_URL=http://localhost:3000
+ADMIN_APP_URL=http://localhost:3002
+
+# Copy this file to .env and update the values
+

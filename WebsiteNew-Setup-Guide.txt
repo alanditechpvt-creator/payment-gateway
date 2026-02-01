@@ -1,0 +1,338 @@
+================================================================================
+        PAYMENT GATEWAY MANAGEMENT SYSTEM - SETUP GUIDE
+================================================================================
+
+This guide will help you set up the Payment Gateway System on a new machine.
+
+================================================================================
+PREREQUISITES
+================================================================================
+
+1. Install Node.js (v18 or higher)
+   Download from: https://nodejs.org/
+   
+2. A code editor (VS Code recommended)
+   Download from: https://code.visualstudio.com/
+
+3. Copy the entire 'WebsiteNew' folder to your laptop
+
+================================================================================
+STEP 1: SET UP BACKEND
+================================================================================
+
+Open PowerShell/Terminal and run these commands:
+
+# Navigate to backend folder
+cd C:\path\to\WebsiteNew\backend
+
+# Install dependencies
+npm install
+
+# Create environment file (copy from example)
+copy .env.example .env
+
+--------------------------------------------------------------------------------
+EDIT THE .env FILE WITH THESE SETTINGS:
+--------------------------------------------------------------------------------
+(You can also copy from backend/env-example.txt)
+
+# Database
+DATABASE_URL="file:./dev.db"
+
+# JWT Authentication
+JWT_SECRET="your-secret-key-change-this-to-something-random"
+JWT_EXPIRES_IN="24h"
+JWT_REFRESH_SECRET="your-refresh-secret-change-this"
+JWT_REFRESH_EXPIRES_IN="30d"
+
+# Server
+PORT=4100
+NODE_ENV=development
+CORS_ORIGIN="http://localhost:5000,http://localhost:5002"
+
+# ============================================================
+# PAYMENT GATEWAY MODE (IMPORTANT!)
+# ============================================================
+# OFFLINE = No public URL needed, use "Check Status" button
+# ONLINE  = Requires ngrok or public URL for webhooks
+# ============================================================
+PG_MODE="OFFLINE"
+PG_AUTO_CHECK_INTERVAL=0
+
+# Runpaisa Payment Gateway
+# Set to true ONLY after IP is whitelisted with Runpaisa
+RUNPAISA_ENABLED=false
+
+# Credentials (get from Runpaisa support)
+RUNPAISA_CLIENT_ID="your-client-id"
+RUNPAISA_USERNAME="your-username"
+RUNPAISA_PASSWORD="your-password"
+RUNPAISA_CALLBACK_URL="http://localhost:4100/api/webhooks/runpaisa"
+
+# App URLs
+FRONTEND_URL="http://localhost:5000"
+ADMIN_URL="http://localhost:5002"
+
+--------------------------------------------------------------------------------
+CONTINUE WITH THESE COMMANDS:
+--------------------------------------------------------------------------------
+
+# Generate Prisma client
+npx prisma generate
+
+# Create database and tables
+npx prisma db push
+
+# Seed the database with initial data (creates Admin user, PGs, Schemas)
+npx prisma db seed
+
+# Add Runpaisa Payment Gateway
+npx ts-node prisma/seed-runpaisa.ts
+
+# Start the backend server
+npm run dev
+
+--------------------------------------------------------------------------------
+EXPECTED OUTPUT:
+--------------------------------------------------------------------------------
+Server running on http://127.0.0.1:4100
+Environment: development
+
+================================================================================
+STEP 2: SET UP FRONTEND (Open a NEW Terminal Window)
+================================================================================
+
+# Navigate to frontend folder
+cd C:\path\to\WebsiteNew\frontend
+
+# Install dependencies
+npm install
+
+# Create environment file
+echo NEXT_PUBLIC_API_URL=http://localhost:4100/api > .env.local
+
+# Start the frontend server
+npm run dev
+
+--------------------------------------------------------------------------------
+EXPECTED OUTPUT:
+--------------------------------------------------------------------------------
+Ready on http://localhost:5000
+
+================================================================================
+STEP 3: SET UP ADMIN PANEL (Open a NEW Terminal Window)
+================================================================================
+
+# Navigate to admin folder
+cd C:\path\to\WebsiteNew\admin
+
+# Install dependencies
+npm install
+
+# Create environment file
+echo NEXT_PUBLIC_API_URL=http://localhost:4100/api > .env.local
+
+# Start the admin server
+npm run dev
+
+--------------------------------------------------------------------------------
+EXPECTED OUTPUT:
+--------------------------------------------------------------------------------
+Ready on http://localhost:5002
+
+================================================================================
+ACCESS URLS
+================================================================================
+
+Backend API:    http://localhost:4100
+Frontend:       http://localhost:5000
+Admin Panel:    http://localhost:5002
+
+================================================================================
+DEFAULT LOGIN CREDENTIALS
+================================================================================
+
+ADMIN PANEL (http://localhost:5002):
+  Email:    admin@newweb.com
+  Password: Admin@123456
+
+USER PORTAL (http://localhost:5000):
+  Create users from Admin Panel, then use those credentials
+
+================================================================================
+QUICK START SCRIPT (OPTIONAL)
+================================================================================
+
+Create a file called "start-all.ps1" in the WebsiteNew folder with this content:
+
+---START OF SCRIPT---
+Write-Host "Starting Payment Gateway System..." -ForegroundColor Cyan
+
+# Start Backend
+Start-Process powershell -ArgumentList "-NoExit", "-Command", "cd backend; npm run dev"
+
+# Wait for backend to start
+Start-Sleep -Seconds 5
+
+# Start Frontend
+Start-Process powershell -ArgumentList "-NoExit", "-Command", "cd frontend; npm run dev"
+
+# Start Admin
+Start-Process powershell -ArgumentList "-NoExit", "-Command", "cd admin; npm run dev"
+
+Write-Host "All services starting!" -ForegroundColor Green
+Write-Host "Backend:  http://localhost:4100" -ForegroundColor Yellow
+Write-Host "Frontend: http://localhost:5000" -ForegroundColor Yellow
+Write-Host "Admin:    http://localhost:5002" -ForegroundColor Yellow
+---END OF SCRIPT---
+
+Run it with: .\start-all.ps1
+
+================================================================================
+TROUBLESHOOTING
+================================================================================
+
+ISSUE: 'npm' is not recognized
+SOLUTION: 
+  - Restart your terminal after installing Node.js
+  - Or manually add Node.js to PATH:
+    $env:Path = "C:\Program Files\nodejs;" + $env:Path
+
+--------------------------------------------------------------------------------
+
+ISSUE: Port already in use (EADDRINUSE or EACCES error)
+SOLUTION:
+  - Kill existing Node processes: taskkill /F /IM node.exe
+  - Or change the port in the config files
+
+--------------------------------------------------------------------------------
+
+ISSUE: Database errors
+SOLUTION:
+  - Delete the database file: del backend\prisma\dev.db
+  - Recreate: npx prisma db push
+  - Re-seed: npx prisma db seed
+
+--------------------------------------------------------------------------------
+
+ISSUE: CORS errors in browser console
+SOLUTION:
+  - Check that CORS_ORIGIN in backend/.env includes your frontend URLs
+  - Restart the backend after changing .env
+
+--------------------------------------------------------------------------------
+
+ISSUE: Login not working
+SOLUTION:
+  - Make sure backend is running (check terminal for errors)
+  - Check browser console for API errors
+  - Verify the API URL in frontend/.env.local
+
+================================================================================
+FOLDER STRUCTURE
+================================================================================
+
+WebsiteNew/
+├── backend/              # Node.js + Express + Prisma API
+│   ├── prisma/           # Database schema and migrations
+│   ├── src/              # Source code
+│   │   ├── controllers/  # API controllers
+│   │   ├── services/     # Business logic
+│   │   ├── routes/       # API routes
+│   │   └── middleware/   # Auth, error handling
+│   └── uploads/          # Uploaded files (photos, documents)
+│
+├── frontend/             # Next.js User Portal
+│   └── src/
+│       ├── app/          # Pages (dashboard, transactions, etc.)
+│       ├── components/   # Reusable components
+│       └── lib/          # API client, store
+│
+├── admin/                # Next.js Admin Panel
+│   └── src/
+│       ├── app/          # Admin pages
+│       └── components/   # Admin components
+│
+└── mobile/               # React Native Mobile App (future)
+
+================================================================================
+PAYMENT GATEWAY MODE CONFIGURATION
+================================================================================
+
+The system supports TWO modes for payment verification:
+
+--------------------------------------------------------------------------------
+MODE 1: OFFLINE (Default - No public URL needed)
+--------------------------------------------------------------------------------
+Set in .env: PG_MODE="OFFLINE"
+
+How it works:
+1. User initiates payment -> Gets redirected to PG page
+2. User completes payment on Runpaisa/PG page
+3. User returns to your app
+4. User clicks "Check Status with Payment Gateway" button
+5. System calls Runpaisa Status API to verify payment
+6. Transaction is auto-updated based on PG response
+
+BEST FOR: Development, Testing, Corporate networks without public access
+
+--------------------------------------------------------------------------------
+MODE 2: ONLINE (Requires public URL or ngrok)
+--------------------------------------------------------------------------------
+Set in .env: PG_MODE="ONLINE"
+
+How it works:
+1. User initiates payment -> Gets redirected to PG page
+2. User completes payment on Runpaisa/PG page
+3. Runpaisa sends webhook callback to your server
+4. Transaction is auto-updated immediately
+
+REQUIRES: 
+- Public URL (via ngrok, hosting, or port forwarding)
+- IP whitelisting with Runpaisa
+
+--------------------------------------------------------------------------------
+SWITCHING MODES:
+--------------------------------------------------------------------------------
+Simply change PG_MODE in backend/.env and restart the backend:
+
+PG_MODE="OFFLINE"   # For local/corporate testing
+PG_MODE="ONLINE"    # For production with public URL
+
+================================================================================
+RUNPAISA INTEGRATION NOTES
+================================================================================
+
+For live testing with Runpaisa:
+
+1. Get your UAT credentials from Runpaisa:
+   - Client ID
+   - Username
+   - Password
+
+2. Contact Runpaisa support to whitelist your PUBLIC IP address
+   (Required for ONLINE mode; recommended for OFFLINE mode too)
+
+3. For OFFLINE mode (no ngrok):
+   - Use the "Check Status with Payment Gateway" button
+   - This calls Runpaisa's Status API directly to verify payment
+   - No public URL or webhook configuration needed!
+
+4. API Endpoints (UAT):
+   - Token: https://dev.api.runpaisa.com/token
+   - Order: https://test.api.pg.runpaisa.com/order
+   - Status: https://test.api.pg.runpaisa.com/status
+
+================================================================================
+SUPPORT
+================================================================================
+
+If you encounter any issues, check:
+1. Terminal logs for error messages
+2. Browser Developer Tools (F12) > Console for frontend errors
+3. Network tab for API request/response details
+
+================================================================================
+                         END OF SETUP GUIDE
+================================================================================
+
