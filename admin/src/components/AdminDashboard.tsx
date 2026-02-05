@@ -3746,5 +3746,5 @@ function SchemaRatesModal({ schema, allPGs, onClose }: { schema: any; allPGs: an
     </div>
   );
 }
-import React from "react";
-// ...existing code...
+
+export default AdminDashboard;
