@@ -475,7 +475,7 @@ export default function UserProfilePage() {
                             try {
                               await schemaApi.assignToUser(e.target.value, userId);
                               toast.success('Schema changed successfully!');
-                              refetch();
+                              refetchUser();
                             } catch (error: any) {
                               toast.error(error.response?.data?.error || 'Failed to change schema');
                             }
