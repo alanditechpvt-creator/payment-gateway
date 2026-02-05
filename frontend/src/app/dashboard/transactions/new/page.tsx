@@ -483,7 +483,7 @@ function NewTransactionContent() {
         toast.success(checkResult.message);
       } else {
         // Still pending or need manual action
-        toast.info(checkResult.message);
+        toast(checkResult.message, { icon: 'ℹ️' });
         if (checkResult.pgStatus) {
           toast(`PG Status: ${checkResult.pgStatus}`, { icon: 'ℹ️' });
         }

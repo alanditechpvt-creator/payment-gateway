@@ -86,7 +86,7 @@ export default function NewsTicker() {
   }, [announcements.length]);
 
   const handleDismiss = (id: string) => {
-    setDismissedIds((prev) => new Set([...prev, id]));
+    setDismissedIds((prev) => new Set(Array.from(prev).concat(id)));
   };
 
   if (!announcements.length) return null;

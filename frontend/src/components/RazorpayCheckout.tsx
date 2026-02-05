@@ -139,7 +139,7 @@ export const RazorpayCheckout: React.FC<RazorpayCheckoutProps> = ({
         },
         modal: {
           ondismiss: function () {
-            toast.info('Payment cancelled');
+            toast('Payment cancelled', { icon: 'ℹ️' });
             onClose?.();
           },
         },
