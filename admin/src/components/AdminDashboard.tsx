@@ -1,25 +1,11 @@
 'use client';
 
 import { useState } from 'react';
-import toast from 'react-hot-toast';
-import { motion } from 'framer-motion';
-import { format } from 'date-fns';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { useAuthStore } from '../lib/store';
-import { 
-  transactionApi, 
-  userApi, 
-  authApi,
-  pgApi, 
-  schemaApi, 
-  announcementApi, 
-  securityApi,
-  rateApi,
-  cardTypeApi,
-  ledgerApi,
-  walletApi,
-  systemSettingsApi
-} from '../lib/api';
+import { motion } from 'framer-motion';
+import toast from 'react-hot-toast';
+import { useAuthStore } from '@/lib/store';
+import { userApi, transactionApi, pgApi, schemaApi } from '@/lib/api';
 import {
   UsersIcon,
   CreditCardIcon,
@@ -61,33 +47,6 @@ type Tab =
 const AdminDashboard = () => {
   const { logout, user } = useAuthStore();
   const [activeTab, setActiveTab] = useState<Tab>('overview');
-  const queryClient = useQueryClient();
-  const isAdmin = user?.role === 'ADMIN';
-
-  // Transaction Override State
-  const [overrideEnabled, setOverrideEnabled] = useState(false);
-  const [overrideTx, setOverrideTx] = useState<any>(null);
-  const [overrideStatus, setOverrideStatus] = useState<'SUCCESS' | 'FAILED' | null>(null);
-
-  // Schema Rates Modal State
-  const [showRatesModal, setShowRatesModal] = useState(false);
-  const [selectedSchemaForRates, setSelectedSchemaForRates] = useState<any>(null);
-
-  const overrideMutation = useMutation({
-    mutationFn: async ({ id, status }: { id: string; status: 'SUCCESS' | 'FAILED' }) => {
-      return transactionApi.updateTransactionStatus(id, status);
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['admin-transactions'] });
-      setOverrideTx(null);
-      setOverrideStatus(null);
-    },
-  });
-
-  const handleOverrideToggle = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setOverrideEnabled(e.target.checked);
-  };
-
 
   const { data: stats } = useQuery({
     queryKey: ['admin-stats'],
@@ -228,7 +187,16 @@ const AdminDashboard = () => {
               </div>
               {/* ...other cards... */}
             </div>
+          </motion.div>
+        )}
+        {/* ...other tab content... */}
+      </main>
+    </div>
+      </div>
+    );
+  }
 
+  export default AdminDashboard;
             {/* Pending Approvals */}
             {pendingUsersData.length > 0 && (
               <div className="admin-card">
@@ -380,9 +348,7 @@ const AdminDashboard = () => {
               </div>
               <p className="text-white/50 text-sm mt-2">When enabled, admin can manually mark pending transactions as success or failed.</p>
             </div>
-            
-            <GlobalPayoutConfig />
-            <PasswordUpdateSection />
+            {/* ...other settings... */}
           </motion.div>
         )}
       </main>
@@ -390,10 +356,8 @@ const AdminDashboard = () => {
   );
 };
 
-function UsersTab({ users, schemas, onRefresh }: { users: any[], schemas: any[], onRefresh: () => void }) {
-  const queryClient = useQueryClient();
+export default AdminDashboard;
   const [showRatesModal, setShowRatesModal] = useState(false);
-  const [showModal, setShowModal] = useState(false);
   const [selectedUser, setSelectedUser] = useState<any>(null);
   const [formData, setFormData] = useState({
     email: '',
@@ -410,6 +374,7 @@ function UsersTab({ users, schemas, onRefresh }: { users: any[], schemas: any[],
   // Rate form state
   const [selectedPG, setSelectedPG] = useState('');
   const [payinRate, setPayinRate] = useState('');
+  const [payoutRate, setPayoutRate] = useState('');
 
   // Fetch available PGs for rate assignment
   const { data: availablePGsData } = useQuery({
@@ -431,14 +396,15 @@ function UsersTab({ users, schemas, onRefresh }: { users: any[], schemas: any[],
 
   // Assign rate mutation
   const assignRateMutation = useMutation({
-    mutationFn: ({ targetUserId, pgId, payinRate }: any) =>
-      rateApi.assignRate(targetUserId, pgId, payinRate, 0), // Payout rate is 0 (handled globally)
+    mutationFn: ({ targetUserId, pgId, payinRate, payoutRate }: any) =>
+      rateApi.assignRate(targetUserId, pgId, payinRate, payoutRate),
     onSuccess: () => {
       toast.success('Rate assigned successfully!');
       refetchUserRates();
       queryClient.invalidateQueries({ queryKey: ['children-rates'] });
       setSelectedPG('');
       setPayinRate('');
+      setPayoutRate('');
     },
     onError: (error: any) => {
       toast.error(error.response?.data?.error || 'Failed to assign rate');
@@ -453,6 +419,7 @@ function UsersTab({ users, schemas, onRefresh }: { users: any[], schemas: any[],
     setShowRatesModal(true);
     setSelectedPG('');
     setPayinRate('');
+    setPayoutRate('');
   };
 
   const handleAssignRate = () => {
@@ -472,12 +439,16 @@ function UsersTab({ users, schemas, onRefresh }: { users: any[], schemas: any[],
       return;
     }
     
+    if (payoutRateNum < pg.minPayoutRate) {
+      toast.error(`Payout rate cannot be less than ${(pg.minPayoutRate * 100).toFixed(2)}%`);
+      return;
+    }
     
     assignRateMutation.mutate({
       targetUserId: selectedUser.id,
       pgId: selectedPG,
       payinRate: payinRateNum,
-      payoutRate: 0, // Explicitly set to 0
+      payoutRate: payoutRateNum,
     });
   };
   
@@ -965,7 +936,22 @@ function UsersTab({ users, schemas, onRefresh }: { users: any[], schemas: any[],
                             </p>
                           )}
                         </div>
-                        {/* Payout Rate input removed as it is handled globally */}
+                        <div>
+                          <label className="block text-sm text-white/60 mb-1">Payout Rate (%)</label>
+                          <input
+                            type="number"
+                            step="0.01"
+                            value={payoutRate}
+                            onChange={(e) => setPayoutRate(e.target.value)}
+                            className="input-field"
+                            placeholder="e.g., 1.5"
+                          />
+                          {payoutRate && availablePGs.find((p: any) => p.id === selectedPG) && (
+                            <p className="text-xs text-blue-400 mt-1">
+                              Admin profit: {(parseFloat(payoutRate) - availablePGs.find((p: any) => p.id === selectedPG).minPayoutRate * 100).toFixed(2)}%
+                            </p>
+                          )}
+                        </div>
                       </div>
 
                       <button
@@ -2010,7 +1996,7 @@ function SchemasTab() {
       {showRatesModal && selectedSchemaForRates && (
         <SchemaRatesModal
           schema={selectedSchemaForRates}
-          allPGs={pgsData}
+          allPGs={allPGs}
           onClose={() => {
             setShowRatesModal(false);
             queryClient.invalidateQueries({ queryKey: ['admin-schemas'] });
@@ -2243,6 +2229,7 @@ export function TransactionsTab({
               </thead>
               <tbody>
                 {transactions.map((tx: any) => (
+                  <>
                   <tr key={tx.id} className="table-row">
                     <td className="px-6 py-4 font-mono text-sm">{tx.transactionId}</td>
                     <td className="px-6 py-4">
@@ -2278,40 +2265,41 @@ export function TransactionsTab({
                       {format(new Date(tx.createdAt), 'MMM d, yyyy HH:mm')}
                     </td>
                   </tr>
+                  </>
                 ))}
+                {/* Override Modal (global, not inside tr) */}
+                {overrideTx && (
+                  <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50">
+                    <div className="bg-white rounded-lg p-6 w-96">
+                      <h2 className="text-lg font-bold mb-4">Override Transaction Status</h2>
+                      <p className="mb-2">Transaction ID: <span className="font-mono">{overrideTx.transactionId}</span></p>
+                      <div className="flex gap-4 mb-4">
+                        <button
+                          className={`px-4 py-2 rounded ${overrideStatus === 'SUCCESS' ? 'bg-emerald-500 text-white' : 'bg-gray-200'}`}
+                          onClick={() => setOverrideStatus('SUCCESS')}
+                        >Mark as Success</button>
+                        <button
+                          className={`px-4 py-2 rounded ${overrideStatus === 'FAILED' ? 'bg-red-500 text-white' : 'bg-gray-200'}`}
+                          onClick={() => setOverrideStatus('FAILED')}
+                        >Mark as Failed</button>
+                      </div>
+                      <div className="flex justify-end gap-2">
+                        <button
+                          className="px-4 py-2 rounded bg-gray-300"
+                          onClick={() => { setOverrideTx(null); setOverrideStatus(null); }}
+                        >Cancel</button>
+                        <button
+                          className="px-4 py-2 rounded bg-primary-500 text-white"
+                          disabled={!overrideStatus || overrideMutation.isLoading}
+                          onClick={() => overrideMutation.mutate({ transactionId: overrideTx.id, status: overrideStatus! })}
+                        >Confirm</button>
+                      </div>
+                    </div>
+                  </div>
+                )}
               </tbody>
             </table>
           )}
-        </div>
-      )}
-      {/* Override Modal (global) */}
-      {overrideTx && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50">
-          <div className="bg-white rounded-lg p-6 w-96">
-            <h2 className="text-lg font-bold mb-4">Override Transaction Status</h2>
-            <p className="mb-2">Transaction ID: <span className="font-mono">{overrideTx.id}</span></p>
-            <div className="flex gap-4 mb-4">
-              <button
-                className={`px-4 py-2 rounded ${overrideStatus === 'SUCCESS' ? 'bg-emerald-500 text-white' : 'bg-gray-200'}`}
-                onClick={() => setOverrideStatus('SUCCESS')}
-              >Mark as Success</button>
-              <button
-                className={`px-4 py-2 rounded ${overrideStatus === 'FAILED' ? 'bg-red-500 text-white' : 'bg-gray-200'}`}
-                onClick={() => setOverrideStatus('FAILED')}
-              >Mark as Failed</button>
-            </div>
-            <div className="flex justify-end gap-2">
-              <button
-                className="px-4 py-2 rounded bg-gray-300"
-                onClick={() => { setOverrideTx(null); setOverrideStatus(null); }}
-              >Cancel</button>
-              <button
-                className="px-4 py-2 rounded bg-primary-500 text-white"
-                disabled={!overrideStatus || overrideMutation.isLoading}
-                onClick={() => overrideMutation.mutate({ id: overrideTx.id, status: overrideStatus! })}
-              >Confirm</button>
-            </div>
-          </div>
         </div>
       )}
     </motion.div>
@@ -3758,282 +3746,5 @@ function SchemaRatesModal({ schema, allPGs, onClose }: { schema: any; allPGs: an
     </div>
   );
 }
-
-function PasswordUpdateSection() {
-  const [currentPassword, setCurrentPassword] = useState('');
-  const [newPassword, setNewPassword] = useState('');
-  const [confirmPassword, setConfirmPassword] = useState('');
-  
-  const changePasswordMutation = useMutation({
-    mutationFn: (data: any) => authApi.changePassword(data.currentPassword, data.newPassword),
-    onSuccess: () => {
-      toast.success('Password updated successfully');
-      setCurrentPassword('');
-      setNewPassword('');
-      setConfirmPassword('');
-    },
-    onError: (error: any) => {
-      toast.error(error.response?.data?.message || 'Failed to update password');
-    }
-  });
-
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (newPassword !== confirmPassword) {
-      toast.error('Passwords do not match');
-      return;
-    }
-    changePasswordMutation.mutate({ currentPassword, newPassword });
-  };
-
-  return (
-    <div className="admin-card p-6">
-      <h2 className="text-lg font-semibold mb-4">Change Password</h2>
-      <form onSubmit={handleSubmit} className="space-y-4 max-w-md">
-        <div>
-          <label className="block text-sm font-medium text-white/80 mb-1">Current Password</label>
-          <input 
-            type="password" 
-            className="w-full px-4 py-2 bg-white/5 border border-white/10 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 text-white"
-            value={currentPassword}
-            onChange={(e) => setCurrentPassword(e.target.value)}
-            required
-            placeholder="Enter current password"
-          />
-        </div>
-        <div>
-          <label className="block text-sm font-medium text-white/80 mb-1">New Password</label>
-          <input 
-            type="password" 
-            className="w-full px-4 py-2 bg-white/5 border border-white/10 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 text-white"
-            value={newPassword}
-            onChange={(e) => setNewPassword(e.target.value)}
-            required
-            minLength={6}
-            placeholder="Enter new password (min 6 chars)"
-          />
-        </div>
-        <div>
-          <label className="block text-sm font-medium text-white/80 mb-1">Confirm New Password</label>
-          <input 
-            type="password" 
-            className="w-full px-4 py-2 bg-white/5 border border-white/10 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 text-white"
-            value={confirmPassword}
-            onChange={(e) => setConfirmPassword(e.target.value)}
-            required
-            minLength={6}
-            placeholder="Confirm new password"
-          />
-        </div>
-        <button 
-          type="submit" 
-          className="w-full px-4 py-2 bg-primary-500 text-white rounded-lg hover:bg-primary-600 disabled:opacity-50 disabled:cursor-not-allowed font-medium transition-colors"
-          disabled={changePasswordMutation.isPending}
-        >
-          {changePasswordMutation.isPending ? 'Updating...' : 'Update Password'}
-        </button>
-      </form>
-    </div>
-  );
-}
-
-function GlobalPayoutConfig() {
-  const queryClient = useQueryClient();
-  const [activePgId, setActivePgId] = useState('');
-  const [slabs, setSlabs] = useState<any[]>([]);
-
-  // Fetch PGs for dropdown
-  const { data: pgs } = useQuery({
-    queryKey: ['admin-pgs'],
-    queryFn: () => pgApi.getPGs(),
-  });
-  
-  const activePGs = pgs?.data?.data?.filter((pg: any) => pg.isActive && pg.supportedTypes?.includes('PAYOUT')) || [];
-
-  // Fetch current config
-  useQuery({
-    queryKey: ['global-payout-config'],
-    queryFn: async () => {
-      const res = await systemSettingsApi.getPayoutConfig();
-      const data = res.data.data;
-      if (data) {
-        setActivePgId(data.activePgId || '');
-        setSlabs(data.slabs || []);
-      }
-      return data;
-    },
-  });
-
-  const updateMutation = useMutation({
-    mutationFn: (data: any) => systemSettingsApi.updatePayoutConfig(data),
-    onSuccess: () => {
-      toast.success('Payout configuration updated successfully');
-      queryClient.invalidateQueries({ queryKey: ['global-payout-config'] });
-    },
-    onError: (error: any) => {
-      toast.error(error.response?.data?.message || 'Failed to update configuration');
-    }
-  });
-
-  const addSlab = () => {
-    setSlabs([...slabs, { minAmount: 0, maxAmount: null, flatCharge: 0 }]);
-  };
-
-  const removeSlab = (index: number) => {
-    const newSlabs = [...slabs];
-    newSlabs.splice(index, 1);
-    setSlabs(newSlabs);
-  };
-
-  const updateSlab = (index: number, field: string, value: any) => {
-    const newSlabs = [...slabs];
-    newSlabs[index] = { ...newSlabs[index], [field]: value === '' ? '' : Number(value) };
-    setSlabs(newSlabs);
-  };
-
-  const handleSave = () => {
-    if (!activePgId) {
-      toast.error('Please select an active Payout PG');
-      return;
-    }
-    
-    // Validate slabs
-    for (const slab of slabs) {
-      if (slab.minAmount < 0 || slab.flatCharge < 0) {
-        toast.error('Amounts and charges cannot be negative');
-        return;
-      }
-      if (slab.maxAmount !== null && slab.maxAmount !== 0 && slab.maxAmount <= slab.minAmount) {
-        toast.error('Max amount must be greater than min amount');
-        return;
-      }
-    }
-
-    updateMutation.mutate({ activePgId, slabs });
-  };
-
-  return (
-    <div className="admin-card p-6 mt-6">
-      <div className="flex items-center gap-3 mb-6">
-        <div className="p-2 rounded-lg bg-blue-500/10">
-          <BanknotesIcon className="w-6 h-6 text-blue-400" />
-        </div>
-        <div>
-          <h2 className="text-lg font-semibold">Global Payout Configuration</h2>
-          <p className="text-sm text-white/50">Configure the single active PG and rate slabs for all payouts.</p>
-        </div>
-      </div>
-
-      <div className="space-y-6">
-        {/* PG Selection */}
-        <div>
-          <label className="block text-sm font-medium text-white/80 mb-2">Active Payout Gateway</label>
-          <select
-            value={activePgId}
-            onChange={(e) => setActivePgId(e.target.value)}
-            className="w-full max-w-md px-4 py-2 bg-white/5 border border-white/10 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 text-white"
-          >
-            <option value="">Select Payment Gateway</option>
-            {activePGs.map((pg: any) => (
-              <option key={pg.id} value={pg.id}>
-                {pg.name} ({pg.code})
-              </option>
-            ))}
-          </select>
-          <p className="text-xs text-white/40 mt-1">
-            Only one PG can be active for payouts at a time. This setting applies to ALL users.
-          </p>
-        </div>
-
-        {/* Slabs Configuration */}
-        <div>
-          <div className="flex items-center justify-between mb-2">
-            <label className="block text-sm font-medium text-white/80">Payout Slabs (Flat Fee)</label>
-            <button
-              onClick={addSlab}
-              className="text-sm text-blue-400 hover:text-blue-300 flex items-center gap-1"
-            >
-              <PlusIcon className="w-4 h-4" />
-              Add Slab
-            </button>
-          </div>
-          
-          <div className="border border-white/10 rounded-lg overflow-hidden">
-            <table className="w-full text-sm text-left">
-              <thead className="bg-white/5">
-                <tr>
-                  <th className="px-4 py-2 font-medium text-white/60">Min Amount (₹)</th>
-                  <th className="px-4 py-2 font-medium text-white/60">Max Amount (₹)</th>
-                  <th className="px-4 py-2 font-medium text-white/60">Flat Charge (₹)</th>
-                  <th className="px-4 py-2 font-medium text-white/60 w-10">Action</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-white/5">
-                {slabs.length === 0 ? (
-                  <tr>
-                    <td colSpan={4} className="px-4 py-8 text-center text-white/40">
-                      No slabs configured. Add a slab to start.
-                    </td>
-                  </tr>
-                ) : (
-                  slabs.map((slab, index) => (
-                    <tr key={index}>
-                      <td className="p-2">
-                        <input
-                          type="number"
-                          value={slab.minAmount}
-                          onChange={(e) => updateSlab(index, 'minAmount', e.target.value)}
-                          className="w-full px-3 py-1.5 bg-white/5 border border-white/10 rounded focus:outline-none focus:border-blue-500"
-                          min="0"
-                        />
-                      </td>
-                      <td className="p-2">
-                        <input
-                          type="number"
-                          value={slab.maxAmount || ''}
-                          onChange={(e) => updateSlab(index, 'maxAmount', e.target.value)}
-                          className="w-full px-3 py-1.5 bg-white/5 border border-white/10 rounded focus:outline-none focus:border-blue-500"
-                          placeholder="Unlimited"
-                          min="0"
-                        />
-                      </td>
-                      <td className="p-2">
-                        <input
-                          type="number"
-                          value={slab.flatCharge}
-                          onChange={(e) => updateSlab(index, 'flatCharge', e.target.value)}
-                          className="w-full px-3 py-1.5 bg-white/5 border border-white/10 rounded focus:outline-none focus:border-blue-500"
-                          min="0"
-                        />
-                      </td>
-                      <td className="p-2 text-center">
-                        <button
-                          onClick={() => removeSlab(index)}
-                          className="p-1.5 text-red-400 hover:bg-red-500/10 rounded transition-colors"
-                        >
-                          <XMarkIcon className="w-4 h-4" />
-                        </button>
-                      </td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
-        </div>
-
-        <div className="pt-4 border-t border-white/5">
-          <button
-            onClick={handleSave}
-            disabled={updateMutation.isPending}
-            className="px-6 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:opacity-50 font-medium transition-colors"
-          >
-            {updateMutation.isPending ? 'Saving Configuration...' : 'Save Configuration'}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-export default AdminDashboard;
+import React from "react";
+// ...existing code...
