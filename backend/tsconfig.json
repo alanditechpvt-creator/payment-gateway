@@ -24,7 +24,6 @@
     "noFallthroughCasesInSwitch": false,
     "noUncheckedIndexedAccess": false,
     "noPropertyAccessFromIndexSignature": false,
-    "suppressImplicitAnyIndexErrors": true,
     
     // Module Resolution
     "moduleResolution": "node",
