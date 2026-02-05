@@ -33,7 +33,7 @@ function PayoutChargesBreakdown({ amount, pgId }: { amount: number; pgId: string
 
   const config = configData?.data?.data;
   const slabs = config?.slabs || [];
-  const chargeType = 'SLAB'; // Global config is always slab-based for now
+  const chargeType = (config?.payoutChargeType || 'SLAB') as 'SLAB' | 'PERCENTAGE';
 
   // Find applicable slab
   const applicableSlab = slabs.find((slab: any) => 
@@ -45,7 +45,7 @@ function PayoutChargesBreakdown({ amount, pgId }: { amount: number; pgId: string
   let slabLabel = '';
   
   if (chargeType === 'PERCENTAGE') {
-    const rate = chargeInfo?.payoutRate || 0;
+    const rate = config?.payoutRate || 0;
     charges = amount * rate;
     slabLabel = `${(rate * 100).toFixed(2)}%`;
   } else if (applicableSlab) {
