@@ -332,19 +332,14 @@ export const authService = {
     // Hash password
     const hashedPassword = await bcrypt.hash(data.password, 12);
 
-    // Update user with onboarding data
+    // Update user with onboarding data (only fields that exist in schema)
     const updatedUser = await prisma.user.update({
       where: { id: user.id },
       data: {
         password: hashedPassword,
         phone: data.phone,
         businessName: data.businessName,
-        address: data.address,
-        city: data.city,
-        state: data.state,
-        pincode: data.pincode,
         panNumber: data.panNumber,
-        gstNumber: data.gstNumber,
         status: 'PENDING_APPROVAL',
         onboardingToken: null,
         onboardingTokenExpiry: null,

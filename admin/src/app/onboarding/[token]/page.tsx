@@ -20,12 +20,7 @@ export default function OnboardingPage() {
     confirmPassword: '',
     phone: '',
     businessName: '',
-    address: '',
-    city: '',
-    state: '',
-    pincode: '',
     panNumber: '',
-    gstNumber: '',
   });
 
   // Verify token on mount
@@ -94,12 +89,7 @@ export default function OnboardingPage() {
       password: formData.password,
       phone: formData.phone,
       businessName: formData.businessName,
-      address: formData.address,
-      city: formData.city,
-      state: formData.state,
-      pincode: formData.pincode,
       panNumber: formData.panNumber.toUpperCase(),
-      gstNumber: formData.gstNumber ? formData.gstNumber.toUpperCase() : undefined,
     });
   };
 
@@ -229,60 +219,6 @@ export default function OnboardingPage() {
             </div>
           </div>
 
-          {/* Address Information */}
-          <div className="bg-white/5 rounded-xl p-6 space-y-4">
-            <h2 className="text-xl font-semibold text-white mb-4">Address Information</h2>
-
-            <div>
-              <label className="block text-sm font-medium text-white/70 mb-2">Address *</label>
-              <textarea
-                value={formData.address}
-                onChange={(e) => setFormData({ ...formData, address: e.target.value })}
-                className="w-full px-4 py-3 bg-white/10 border border-white/20 rounded-lg text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-purple-500"
-                placeholder="Complete address"
-                rows={2}
-                required
-              />
-            </div>
-
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <label className="block text-sm font-medium text-white/70 mb-2">City *</label>
-                <input
-                  type="text"
-                  value={formData.city}
-                  onChange={(e) => setFormData({ ...formData, city: e.target.value })}
-                  className="w-full px-4 py-3 bg-white/10 border border-white/20 rounded-lg text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-purple-500"
-                  required
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-white/70 mb-2">State *</label>
-                <input
-                  type="text"
-                  value={formData.state}
-                  onChange={(e) => setFormData({ ...formData, state: e.target.value })}
-                  className="w-full px-4 py-3 bg-white/10 border border-white/20 rounded-lg text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-purple-500"
-                  required
-                />
-              </div>
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-white/70 mb-2">Pincode *</label>
-              <input
-                type="text"
-                value={formData.pincode}
-                onChange={(e) => setFormData({ ...formData, pincode: e.target.value })}
-                className="w-full px-4 py-3 bg-white/10 border border-white/20 rounded-lg text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-purple-500"
-                placeholder="6-digit pincode"
-                required
-                pattern="[0-9]{6}"
-              />
-            </div>
-          </div>
-
           {/* Tax Information */}
           <div className="bg-white/5 rounded-xl p-6 space-y-4">
             <h2 className="text-xl font-semibold text-white mb-4">Tax Information</h2>
@@ -298,18 +234,6 @@ export default function OnboardingPage() {
                 required
                 pattern="[A-Z]{5}[0-9]{4}[A-Z]{1}"
                 maxLength={10}
-              />
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-white/70 mb-2">GST Number (Optional)</label>
-              <input
-                type="text"
-                value={formData.gstNumber}
-                onChange={(e) => setFormData({ ...formData, gstNumber: e.target.value.toUpperCase() })}
-                className="w-full px-4 py-3 bg-white/10 border border-white/20 rounded-lg text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-purple-500"
-                placeholder="22AAAAA0000A1Z5"
-                maxLength={15}
               />
             </div>
           </div>
