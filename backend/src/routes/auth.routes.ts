@@ -13,6 +13,10 @@ router.post('/reset-password', authController.resetPassword);
 // CAPTCHA check (public - call before login to check if CAPTCHA is needed)
 router.get('/check-captcha', authController.checkCaptchaRequired);
 
+// Onboarding routes (public)
+router.get('/onboarding/:token', authController.verifyOnboardingToken);
+router.post('/onboarding/:token', authController.completeOnboarding);
+
 // Protected routes
 router.post('/logout', authenticate, authController.logout);
 router.post('/change-password', authenticate, authController.changePassword);

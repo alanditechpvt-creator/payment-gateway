@@ -283,5 +283,86 @@ export const authService = {
     
     return { message: 'Password changed successfully' };
   },
+
+  async verifyOnboardingToken(token: string) {
+    const user = await prisma.user.findFirst({
+      where: {
+        onboardingToken: token,
+        status: 'PENDING_ONBOARDING',
+      },
+      select: {
+        id: true,
+        email: true,
+        firstName: true,
+        lastName: true,
+        phone: true,
+        businessName: true,
+        role: true,
+        onboardingTokenExpiry: true,
+      },
+    });
+
+    if (!user) {
+      throw new AppError('Invalid onboarding link', 400);
+    }
+
+    if (user.onboardingTokenExpiry && user.onboardingTokenExpiry < new Date()) {
+      throw new AppError('Onboarding link has expired', 400);
+    }
+
+    return { user };
+  },
+
+  async completeOnboarding(token: string, data: any) {
+    const user = await prisma.user.findFirst({
+      where: {
+        onboardingToken: token,
+        status: 'PENDING_ONBOARDING',
+      },
+    });
+
+    if (!user) {
+      throw new AppError('Invalid onboarding link', 400);
+    }
+
+    if (user.onboardingTokenExpiry && user.onboardingTokenExpiry < new Date()) {
+      throw new AppError('Onboarding link has expired', 400);
+    }
+
+    // Hash password
+    const hashedPassword = await bcrypt.hash(data.password, 12);
+
+    // Update user with onboarding data
+    const updatedUser = await prisma.user.update({
+      where: { id: user.id },
+      data: {
+        password: hashedPassword,
+        phone: data.phone,
+        businessName: data.businessName,
+        address: data.address,
+        city: data.city,
+        state: data.state,
+        pincode: data.pincode,
+        panNumber: data.panNumber,
+        gstNumber: data.gstNumber,
+        status: 'PENDING_APPROVAL',
+        onboardingToken: null,
+        onboardingTokenExpiry: null,
+      },
+      select: {
+        id: true,
+        email: true,
+        firstName: true,
+        lastName: true,
+        role: true,
+        status: true,
+      },
+    });
+
+    return {
+      message: 'Onboarding completed successfully. Your account is pending approval.',
+      user: updatedUser,
+    };
+  },
 };
 

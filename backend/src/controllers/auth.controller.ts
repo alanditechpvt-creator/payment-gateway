@@ -106,5 +106,25 @@ export const authController = {
       next(error);
     }
   },
+
+  async verifyOnboardingToken(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { token } = req.params;
+      const result = await authService.verifyOnboardingToken(token);
+      res.json({ success: true, data: result });
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  async completeOnboarding(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { token } = req.params;
+      const result = await authService.completeOnboarding(token, req.body);
+      res.json({ success: true, data: result });
+    } catch (error) {
+      next(error);
+    }
+  },
 };
 
