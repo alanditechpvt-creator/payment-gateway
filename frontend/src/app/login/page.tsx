@@ -97,7 +97,7 @@ export default function LoginPage() {
     
     try {
       const captchaToken = captchaConfig.required ? (getToken() || undefined) : undefined;
-      const response = await authApi.login(data.email, data.password, captchaToken);
+      const response = await authApi.login(data.email, data.password, captchaToken, false);
       const { user, accessToken, refreshToken } = response.data.data;
       
       setAuth(user, accessToken, refreshToken);
