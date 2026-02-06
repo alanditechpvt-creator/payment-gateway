@@ -65,6 +65,10 @@ export const authApi = {
     api.post('/auth/change-password', { currentPassword, newPassword }),
   checkCaptcha: (email: string) =>
     api.get('/auth/check-captcha', { params: { email } }),
+  verifyOnboardingToken: (token: string) =>
+    api.get(`/auth/onboarding/${token}`),
+  completeOnboarding: (token: string, data: any) =>
+    api.post(`/auth/onboarding/${token}`, data),
 };
 
 export const userApi = {
