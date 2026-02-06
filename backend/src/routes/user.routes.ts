@@ -70,5 +70,8 @@ router.delete('/:userId/pg/:pgId', userController.removePGAssignment);
 // Get onboarding link (admin only)
 router.get('/:userId/onboarding-link', userController.getOnboardingLink);
 
+// Resend onboarding email
+router.post('/:userId/resend-onboarding', userController.resendOnboardingEmail);
+
 export default router;
 

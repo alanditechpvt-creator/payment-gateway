@@ -33,6 +33,9 @@ import {
   FunnelIcon,
   ArrowsRightLeftIcon,
   BanknotesIcon,
+  PencilIcon,
+  XMarkIcon,
+  PaperAirplaneIcon,
 } from '@heroicons/react/24/outline';
 import { walletApi } from '@/lib/api';
 
@@ -59,6 +62,16 @@ export default function UserProfilePage() {
   // Wallet state
   const [walletAmount, setWalletAmount] = useState('');
   const [walletDescription, setWalletDescription] = useState('');
+  
+  // Edit mode state
+  const [isEditMode, setIsEditMode] = useState(false);
+  const [editForm, setEditForm] = useState({
+    firstName: '',
+    lastName: '',
+    email: '',
+    phone: '',
+    businessName: '',
+  });
   
   // Ledger state
   const [ledgerPage, setLedgerPage] = useState(1);
@@ -165,6 +178,16 @@ export default function UserProfilePage() {
     },
   });
   
+  const resendOnboardingMutation = useMutation({
+    mutationFn: () => userApi.resendOnboardingEmail(userId),
+    onSuccess: () => {
+      toast.success('Onboarding email sent successfully!');
+    },
+    onError: (error: any) => {
+      toast.error(error.response?.data?.error || 'Failed to send onboarding email');
+    },
+  });
+  
   // Wallet mutations
   const creditMutation = useMutation({
     mutationFn: ({ amount, description }: { amount: number; description: string }) =>
@@ -230,6 +253,47 @@ export default function UserProfilePage() {
       }
     }
   }, [user]);
+  
+  // Initialize edit form when user data loads
+  useEffect(() => {
+    if (user) {
+      setEditForm({
+        firstName: user.firstName || '',
+        lastName: user.lastName || '',
+        email: user.email || '',
+        phone: user.phone || '',
+        businessName: user.businessName || '',
+      });
+    }
+  }, [user]);
+  
+  const handleEditToggle = () => {
+    if (isEditMode) {
+      // Cancel edit - reset form
+      setEditForm({
+        firstName: user.firstName || '',
+        lastName: user.lastName || '',
+        email: user.email || '',
+        phone: user.phone || '',
+        businessName: user.businessName || '',
+      });
+    }
+    setIsEditMode(!isEditMode);
+  };
+  
+  const handleSaveUserDetails = () => {
+    // Validate email
+    if (!editForm.email || !editForm.email.includes('@')) {
+      toast.error('Please enter a valid email address');
+      return;
+    }
+    
+    updateUserMutation.mutate(editForm, {
+      onSuccess: () => {
+        setIsEditMode(false);
+      },
+    });
+  };
   
   const handleAssignRate = () => {
     if (!selectedPG) {
@@ -435,31 +499,125 @@ export default function UserProfilePage() {
               {/* Details Tab */}
               {activeTab === 'details' && (
                 <div className="space-y-6">
-                  <h3 className="text-lg font-semibold">User Information</h3>
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-lg font-semibold">User Information</h3>
+                    <div className="flex gap-2">
+                      {user.status === 'PENDING_ONBOARDING' && (
+                        <button
+                          onClick={() => resendOnboardingMutation.mutate()}
+                          disabled={resendOnboardingMutation.isPending}
+                          className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors flex items-center gap-2"
+                        >
+                          <PaperAirplaneIcon className="w-4 h-4" />
+                          {resendOnboardingMutation.isPending ? 'Sending...' : 'Resend Onboarding Email'}
+                        </button>
+                      )}
+                      {isEditMode ? (
+                        <>
+                          <button
+                            onClick={handleSaveUserDetails}
+                            disabled={updateUserMutation.isPending}
+                            className="px-4 py-2 bg-emerald-500 text-white rounded-lg hover:bg-emerald-600 transition-colors flex items-center gap-2"
+                          >
+                            <CheckCircleIcon className="w-4 h-4" />
+                            Save Changes
+                          </button>
+                          <button
+                            onClick={handleEditToggle}
+                            className="px-4 py-2 bg-white/5 text-white/70 rounded-lg hover:bg-white/10 transition-colors flex items-center gap-2"
+                          >
+                            <XMarkIcon className="w-4 h-4" />
+                            Cancel
+                          </button>
+                        </>
+                      ) : (
+                        <button
+                          onClick={handleEditToggle}
+                          className="px-4 py-2 bg-primary-500 text-white rounded-lg hover:bg-primary-600 transition-colors flex items-center gap-2"
+                        >
+                          <PencilIcon className="w-4 h-4" />
+                          Edit Details
+                        </button>
+                      )}
+                    </div>
+                  </div>
                   
                   <div className="grid md:grid-cols-2 gap-6">
                     <div>
                       <label className="block text-sm text-white/60 mb-2">First Name</label>
-                      <p className="px-4 py-3 bg-white/5 rounded-xl">{user.firstName || '-'}</p>
+                      {isEditMode ? (
+                        <input
+                          type="text"
+                          value={editForm.firstName}
+                          onChange={(e) => setEditForm({ ...editForm, firstName: e.target.value })}
+                          className="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-xl focus:outline-none focus:border-primary-500"
+                          placeholder="Enter first name"
+                        />
+                      ) : (
+                        <p className="px-4 py-3 bg-white/5 rounded-xl">{user.firstName || '-'}</p>
+                      )}
                     </div>
                     <div>
                       <label className="block text-sm text-white/60 mb-2">Last Name</label>
-                      <p className="px-4 py-3 bg-white/5 rounded-xl">{user.lastName || '-'}</p>
+                      {isEditMode ? (
+                        <input
+                          type="text"
+                          value={editForm.lastName}
+                          onChange={(e) => setEditForm({ ...editForm, lastName: e.target.value })}
+                          className="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-xl focus:outline-none focus:border-primary-500"
+                          placeholder="Enter last name"
+                        />
+                      ) : (
+                        <p className="px-4 py-3 bg-white/5 rounded-xl">{user.lastName || '-'}</p>
+                      )}
                     </div>
                     <div>
                       <label className="block text-sm text-white/60 mb-2">Email</label>
-                      <p className="px-4 py-3 bg-white/5 rounded-xl flex items-center gap-2">
-                        {user.email}
-                        {user.emailVerified && <CheckCircleIcon className="w-4 h-4 text-emerald-400" />}
-                      </p>
+                      {isEditMode ? (
+                        <div>
+                          <input
+                            type="email"
+                            value={editForm.email}
+                            onChange={(e) => setEditForm({ ...editForm, email: e.target.value })}
+                            className="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-xl focus:outline-none focus:border-primary-500"
+                            placeholder="Enter email"
+                          />
+                          <p className="text-xs text-amber-400 mt-1">⚠️ Changing email will require re-verification</p>
+                        </div>
+                      ) : (
+                        <p className="px-4 py-3 bg-white/5 rounded-xl flex items-center gap-2">
+                          {user.email}
+                          {user.emailVerified && <CheckCircleIcon className="w-4 h-4 text-emerald-400" />}
+                        </p>
+                      )}
                     </div>
                     <div>
                       <label className="block text-sm text-white/60 mb-2">Phone</label>
-                      <p className="px-4 py-3 bg-white/5 rounded-xl">{user.phone || '-'}</p>
+                      {isEditMode ? (
+                        <input
+                          type="tel"
+                          value={editForm.phone}
+                          onChange={(e) => setEditForm({ ...editForm, phone: e.target.value })}
+                          className="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-xl focus:outline-none focus:border-primary-500"
+                          placeholder="Enter phone number"
+                        />
+                      ) : (
+                        <p className="px-4 py-3 bg-white/5 rounded-xl">{user.phone || '-'}</p>
+                      )}
                     </div>
                     <div>
                       <label className="block text-sm text-white/60 mb-2">Business Name</label>
-                      <p className="px-4 py-3 bg-white/5 rounded-xl">{user.businessName || '-'}</p>
+                      {isEditMode ? (
+                        <input
+                          type="text"
+                          value={editForm.businessName}
+                          onChange={(e) => setEditForm({ ...editForm, businessName: e.target.value })}
+                          className="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-xl focus:outline-none focus:border-primary-500"
+                          placeholder="Enter business name"
+                        />
+                      ) : (
+                        <p className="px-4 py-3 bg-white/5 rounded-xl">{user.businessName || '-'}</p>
+                      )}
                     </div>
                     <div>
                       <label className="block text-sm text-white/60 mb-2">Role</label>
@@ -481,6 +639,7 @@ export default function UserProfilePage() {
                             }
                           }}
                           className="flex-1 px-4 py-3 bg-white/5 border border-white/10 rounded-xl focus:outline-none focus:border-primary-500"
+                          disabled={isEditMode}
                         >
                           <option value="">Select Schema</option>
                           {schemas.map((s: any) => (

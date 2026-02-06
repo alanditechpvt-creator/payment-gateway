@@ -81,6 +81,7 @@ export const userApi = {
   assignPG: (userId: string, pgId: string, customRate?: number) =>
     api.post(`/users/${userId}/pg`, { pgId, customRate }),
   getOnboardingLink: (userId: string) => api.get(`/users/${userId}/onboarding-link`),
+  resendOnboardingEmail: (userId: string) => api.post(`/users/${userId}/resend-onboarding`),
 };
 
 export const walletApi = {

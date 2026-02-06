@@ -1,4 +1,5 @@
 import bcrypt from 'bcryptjs';
+import crypto from 'crypto';
 import { v4 as uuidv4 } from 'uuid';
 import prisma from '../lib/prisma';
 import { CreateUserDTO, UpdateUserDTO, UpdatePermissionsDTO, ALLOWED_CHILD_ROLES, ROLE_HIERARCHY, PaginationParams, OnboardingDTO, UserRole, UserStatus } from '../types';
@@ -635,6 +636,65 @@ export const userService = {
     });
     
     return { message: 'Email verified successfully' };
+  },
+
+  async resendOnboardingEmail(requesterId: string, userId: string) {
+    const requester = await prisma.user.findUnique({
+      where: { id: requesterId },
+      select: { id: true, role: true, firstName: true, lastName: true },
+    });
+    
+    if (!requester) {
+      throw new AppError('Requester not found', 404);
+    }
+    
+    // Check access - admin can resend for anyone, others can only resend for their children
+    if (requester.role !== 'ADMIN') {
+      const hasAccess = await this.isInHierarchy(requesterId, userId);
+      if (!hasAccess) {
+        throw new AppError('Access denied', 403);
+      }
+    }
+    
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { 
+        id: true, 
+        email: true, 
+        onboardingToken: true, 
+        onboardingTokenExpiry: true, 
+        status: true 
+      },
+    });
+    
+    if (!user) {
+      throw new AppError('User not found', 404);
+    }
+    
+    if (user.status !== 'PENDING_ONBOARDING') {
+      throw new AppError('User has already completed onboarding or is not in pending state', 400);
+    }
+    
+    // Generate new token if expired or doesn't exist
+    let onboardingToken = user.onboardingToken;
+    if (!onboardingToken || !user.onboardingTokenExpiry || user.onboardingTokenExpiry < new Date()) {
+      onboardingToken = crypto.randomBytes(32).toString('hex');
+      const onboardingTokenExpiry = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // 7 days
+      
+      await prisma.user.update({
+        where: { id: userId },
+        data: { onboardingToken, onboardingTokenExpiry },
+      });
+    }
+    
+    // Send onboarding email
+    const creatorName = `${requester.firstName || ''} ${requester.lastName || ''}`.trim() || 'Admin';
+    await emailService.sendOnboardingInvite(user.email, onboardingToken, creatorName);
+    
+    return { 
+      message: 'Onboarding email sent successfully',
+      token: onboardingToken,
+    };
   },
 };
 

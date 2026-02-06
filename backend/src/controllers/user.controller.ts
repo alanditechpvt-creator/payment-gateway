@@ -186,5 +186,15 @@ export const userController = {
       next(error);
     }
   },
+
+  async resendOnboardingEmail(req: AuthRequest, res: Response, next: NextFunction) {
+    try {
+      const { userId } = req.params;
+      const result = await userService.resendOnboardingEmail(req.user!.userId, userId);
+      res.json({ success: true, data: result });
+    } catch (error) {
+      next(error);
+    }
+  },
 };
 

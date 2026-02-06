@@ -1,11 +1,12 @@
 'use client';
 
 import { useState } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { motion } from 'framer-motion';
-import toast from 'react-hot-toast';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { userApi, transactionApi, pgApi, schemaApi, rateApi, announcementApi } from '@/lib/api';
 import { useAuthStore } from '@/lib/store';
-import { userApi, transactionApi, pgApi, schemaApi } from '@/lib/api';
+import { format } from 'date-fns';
+import toast from 'react-hot-toast';
 import {
   UsersIcon,
   CreditCardIcon,
@@ -28,62 +29,53 @@ import {
   ChevronLeftIcon,
   ChevronRightIcon,
   PencilIcon,
-  ArrowLeftIcon
+  ArrowLeftIcon,
 } from '@heroicons/react/24/outline';
 import { CheckIcon } from '@heroicons/react/24/solid';
+import { walletApi, ledgerApi, cardTypeApi } from '@/lib/api';
 
-type Tab =
-  | 'overview'
-  | 'users'
-  | 'transactions'
-  | 'wallet'
-  | 'ledger'
-  | 'gateways'
-  | 'cardtypes'
-  | 'schemas'
-  | 'announcements'
-  | 'settings';
+type Tab = 'overview' | 'users' | 'transactions' | 'gateways' | 'cardtypes' | 'schemas' | 'wallet' | 'ledger' | 'announcements' | 'settings';
 
-const AdminDashboard = () => {
-  const { logout, user } = useAuthStore();
+export function AdminDashboard() {
+  const { user, logout } = useAuthStore();
   const [activeTab, setActiveTab] = useState<Tab>('overview');
-
+  
   const { data: stats } = useQuery({
     queryKey: ['admin-stats'],
     queryFn: () => transactionApi.getStats(),
   });
-
+  
   const { data: users, refetch: refetchUsers } = useQuery({
     queryKey: ['admin-users'],
     queryFn: () => userApi.getUsers({ limit: 100 }),
   });
-
+  
   const { data: pgs } = useQuery({
     queryKey: ['admin-pgs'],
     queryFn: () => pgApi.getPGs(),
   });
-
+  
   const { data: schemas } = useQuery({
     queryKey: ['admin-schemas'],
     queryFn: () => schemaApi.getSchemas(),
   });
-
+  
   const { data: pendingUsers } = useQuery({
     queryKey: ['pending-users'],
     queryFn: () => userApi.getUsers({ status: 'PENDING_APPROVAL', limit: 10 }),
   });
-
+  
   const handleLogout = () => {
     logout();
     window.location.href = '/login';
   };
-
+  
   const statsData = stats?.data?.data;
   const usersData = users?.data?.data || [];
   const pgsData = pgs?.data?.data || pgs?.data || [];
   const schemasData = schemas?.data?.data || schemas?.data || [];
   const pendingUsersData = pendingUsers?.data?.data || [];
-
+  
   const tabs = [
     { id: 'overview', name: 'Overview', icon: ChartBarIcon },
     { id: 'users', name: 'Users', icon: UsersIcon },
@@ -96,7 +88,7 @@ const AdminDashboard = () => {
     { id: 'announcements', name: 'Announcements', icon: MegaphoneIcon },
     { id: 'settings', name: 'Settings', icon: Cog6ToothIcon },
   ];
-
+  
   return (
     <div className="min-h-screen bg-[#0f0f0f]">
       {/* Sidebar */}
@@ -113,25 +105,21 @@ const AdminDashboard = () => {
             </div>
           </div>
         </div>
+        
         {/* Navigation - scrollable if needed */}
         <nav className="flex-1 p-4 space-y-1 overflow-y-auto">
-          {tabs.map((tab) => {
-            const Icon = tab.icon;
-            return (
-              <button
-                key={tab.id}
-                onClick={() => setActiveTab(tab.id as Tab)}
-                className={
-                  `w-full flex items-center gap-3 px-4 py-3 rounded-xl hover:bg-white/5 transition-colors font-medium` +
-                  (activeTab === tab.id ? ' bg-white/10 text-white' : ' text-white/60')
-                }
-              >
-                <Icon className="w-5 h-5" />
-                <span>{tab.name}</span>
-              </button>
-            );
-          })}
+          {tabs.map((tab) => (
+            <button
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id as Tab)}
+              className={`sidebar-link w-full ${activeTab === tab.id ? 'active' : ''}`}
+            >
+              <tab.icon className="w-5 h-5" />
+              <span>{tab.name}</span>
+            </button>
+          ))}
         </nav>
+        
         {/* User & Sign Out - always visible at bottom */}
         <div className="p-4 border-t border-white/5 flex-shrink-0">
           <div className="flex items-center gap-3 px-4 py-3 rounded-xl bg-white/5">
@@ -152,6 +140,7 @@ const AdminDashboard = () => {
           </button>
         </div>
       </aside>
+      
       {/* Main Content */}
       <main className="ml-64 p-8">
         {activeTab === 'overview' && (
@@ -161,6 +150,7 @@ const AdminDashboard = () => {
             className="space-y-8"
           >
             <h1 className="text-2xl font-bold">Dashboard Overview</h1>
+            
             {/* Stats Grid */}
             <div className="grid grid-cols-4 gap-6">
               <div className="admin-card">
@@ -175,28 +165,43 @@ const AdminDashboard = () => {
                 </p>
                 <p className="text-sm text-white/40 mt-2">{statsData?.payin?.count || 0} transactions</p>
               </div>
+              
               <div className="admin-card">
                 <div className="flex items-center justify-between mb-4">
-                  <div className="p-3 rounded-xl bg-purple-500/10">
-                    <BanknotesIcon className="w-6 h-6 text-purple-400" />
+                  <div className="p-3 rounded-xl bg-violet-500/10">
+                    <ArrowUpIcon className="w-6 h-6 text-violet-400" />
                   </div>
                 </div>
                 <p className="text-white/50 text-sm">Total Payout</p>
-                <p className="text-2xl font-bold mt-1">₹{Number(statsData?.payout?.totalAmount || 0).toLocaleString('en-IN')}</p>
+                <p className="text-2xl font-bold mt-1">
+                  ₹{Number(statsData?.payout?.totalAmount || 0).toLocaleString('en-IN')}
+                </p>
                 <p className="text-sm text-white/40 mt-2">{statsData?.payout?.count || 0} transactions</p>
               </div>
-              {/* ...other cards... */}
+              
+              <div className="admin-card">
+                <div className="flex items-center justify-between mb-4">
+                  <div className="p-3 rounded-xl bg-blue-500/10">
+                    <UsersIcon className="w-6 h-6 text-blue-400" />
+                  </div>
+                </div>
+                <p className="text-white/50 text-sm">Total Users</p>
+                <p className="text-2xl font-bold mt-1">{usersData.length}</p>
+                <p className="text-sm text-white/40 mt-2">{pendingUsersData.length} pending approval</p>
+              </div>
+              
+              <div className="admin-card">
+                <div className="flex items-center justify-between mb-4">
+                  <div className="p-3 rounded-xl bg-orange-500/10">
+                    <CreditCardIcon className="w-6 h-6 text-orange-400" />
+                  </div>
+                </div>
+                <p className="text-white/50 text-sm">Payment Gateways</p>
+                <p className="text-2xl font-bold mt-1">{pgsData.length}</p>
+                <p className="text-sm text-white/40 mt-2">{pgsData.filter((pg: any) => pg.isActive).length} active</p>
+              </div>
             </div>
-          </motion.div>
-        )}
-        {/* ...other tab content... */}
-      </main>
-    </div>
-      </div>
-    );
-  }
-
-  export default AdminDashboard;
+            
             {/* Pending Approvals */}
             {pendingUsersData.length > 0 && (
               <div className="admin-card">
@@ -305,15 +310,7 @@ const AdminDashboard = () => {
         )}
         
         {activeTab === 'transactions' && (
-          <TransactionsTab
-            isAdmin={isAdmin}
-            overrideEnabled={overrideEnabled}
-            overrideTx={overrideTx}
-            setOverrideTx={setOverrideTx}
-            overrideStatus={overrideStatus}
-            setOverrideStatus={setOverrideStatus}
-            overrideMutation={overrideMutation}
-          />
+          <TransactionsTab />
         )}
         
         {activeTab === 'wallet' && (
@@ -329,34 +326,16 @@ const AdminDashboard = () => {
         )}
         
         {activeTab === 'settings' && (
-          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-8">
-            <h1 className="text-2xl font-bold mb-6">Settings</h1>
-            <div className="admin-card p-6">
-              <h2 className="text-lg font-semibold mb-4">Admin Transaction Override</h2>
-              <div className="flex items-center gap-4">
-                <label htmlFor="admin-override-toggle" className="font-medium text-white/80">Enable Admin Transaction Override</label>
-                <input
-                  id="admin-override-toggle"
-                  type="checkbox"
-                  checked={overrideEnabled}
-                  onChange={handleOverrideToggle}
-                  className="w-5 h-5 accent-primary-500"
-                />
-                <span className={`ml-2 px-2 py-1 rounded text-xs font-medium ${overrideEnabled ? 'bg-emerald-500/10 text-emerald-400' : 'bg-red-500/10 text-red-400'}`}>
-                  {overrideEnabled ? 'Enabled' : 'Disabled'}
-                </span>
-              </div>
-              <p className="text-white/50 text-sm mt-2">When enabled, admin can manually mark pending transactions as success or failed.</p>
-            </div>
-            {/* ...other settings... */}
-          </motion.div>
+          <SettingsTab />
         )}
       </main>
     </div>
   );
-};
+}
 
-export default AdminDashboard;
+function UsersTab({ users, schemas, onRefresh }: { users: any[]; schemas: any[]; onRefresh: () => void }) {
+  const queryClient = useQueryClient();
+  const [showModal, setShowModal] = useState(false);
   const [showRatesModal, setShowRatesModal] = useState(false);
   const [selectedUser, setSelectedUser] = useState<any>(null);
   const [formData, setFormData] = useState({
@@ -2007,55 +1986,39 @@ function SchemasTab() {
   );
 }
 
-export function TransactionsTab({
-  isAdmin,
-  overrideEnabled,
-  overrideTx,
-  setOverrideTx,
-  overrideStatus,
-  setOverrideStatus,
-  overrideMutation
-}: {
-  isAdmin: boolean;
-  overrideEnabled: boolean;
-  overrideTx: any;
-  setOverrideTx: (tx: any) => void;
-  overrideStatus: 'SUCCESS' | 'FAILED' | null;
-  setOverrideStatus: (status: 'SUCCESS' | 'FAILED' | null) => void;
-  overrideMutation: any;
-}) {
+function TransactionsTab() {
   const [pgFilter, setPgFilter] = useState<string>('');
   const [typeFilter, setTypeFilter] = useState<string>('');
   const [statusFilter, setStatusFilter] = useState<string>('');
   const [viewMode, setViewMode] = useState<'all' | 'grouped'>('all');
-
+  
   const { data, isLoading } = useQuery({
     queryKey: ['admin-transactions', pgFilter, typeFilter, statusFilter],
-    queryFn: () => transactionApi.getTransactions({
+    queryFn: () => transactionApi.getTransactions({ 
       limit: 100,
       pgId: pgFilter || undefined,
       type: typeFilter || undefined,
       status: statusFilter || undefined,
     }),
   });
-
+  
   const { data: pgsData } = useQuery({
     queryKey: ['pgs-for-filter'],
     queryFn: () => pgApi.getPGs(),
   });
-
+  
   const transactions = data?.data?.data || [];
   const pgs = pgsData?.data?.data || pgsData?.data || [];
-
+  
   // Group transactions by PG
   const groupedByPG = transactions.reduce((acc: any, tx: any) => {
     const pgName = tx.paymentGateway?.name || 'Unknown';
     if (!acc[pgName]) {
-      acc[pgName] = {
-        transactions: [],
-        totalAmount: 0,
+      acc[pgName] = { 
+        transactions: [], 
+        totalAmount: 0, 
         successCount: 0,
-        pg: tx.paymentGateway
+        pg: tx.paymentGateway 
       };
     }
     acc[pgName].transactions.push(tx);
@@ -2063,7 +2026,7 @@ export function TransactionsTab({
     if (tx.status === 'SUCCESS') acc[pgName].successCount++;
     return acc;
   }, {});
-
+  
   return (
     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-6">
       <div className="flex items-center justify-between">
@@ -2087,7 +2050,7 @@ export function TransactionsTab({
           </button>
         </div>
       </div>
-
+      
       {/* Filters */}
       <div className="admin-card p-4">
         <div className="flex flex-wrap gap-4">
@@ -2122,7 +2085,7 @@ export function TransactionsTab({
           </select>
         </div>
       </div>
-
+      
       {isLoading ? (
         <div className="flex items-center justify-center py-12">
           <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-primary-500"></div>
@@ -2152,8 +2115,8 @@ export function TransactionsTab({
                     <div>
                       <p className="text-sm text-white/50">Success Rate</p>
                       <p className="font-semibold text-lg text-emerald-400">
-                        {data.transactions.length > 0
-                          ? Math.round((data.successCount / data.transactions.length) * 100)
+                        {data.transactions.length > 0 
+                          ? Math.round((data.successCount / data.transactions.length) * 100) 
                           : 0}%
                       </p>
                     </div>
@@ -2229,7 +2192,6 @@ export function TransactionsTab({
               </thead>
               <tbody>
                 {transactions.map((tx: any) => (
-                  <>
                   <tr key={tx.id} className="table-row">
                     <td className="px-6 py-4 font-mono text-sm">{tx.transactionId}</td>
                     <td className="px-6 py-4">
@@ -2252,51 +2214,12 @@ export function TransactionsTab({
                       }`}>
                         {tx.status}
                       </span>
-                      {isAdmin && overrideEnabled && tx.status === 'PENDING' && (
-                        <button
-                          className="ml-2 px-2 py-1 text-xs rounded bg-primary-500 text-white hover:bg-primary-600"
-                          onClick={() => setOverrideTx(tx)}
-                        >
-                          Override
-                        </button>
-                      )}
                     </td>
                     <td className="px-6 py-4 text-white/50">
                       {format(new Date(tx.createdAt), 'MMM d, yyyy HH:mm')}
                     </td>
                   </tr>
-                  </>
                 ))}
-                {/* Override Modal (global, not inside tr) */}
-                {overrideTx && (
-                  <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50">
-                    <div className="bg-white rounded-lg p-6 w-96">
-                      <h2 className="text-lg font-bold mb-4">Override Transaction Status</h2>
-                      <p className="mb-2">Transaction ID: <span className="font-mono">{overrideTx.transactionId}</span></p>
-                      <div className="flex gap-4 mb-4">
-                        <button
-                          className={`px-4 py-2 rounded ${overrideStatus === 'SUCCESS' ? 'bg-emerald-500 text-white' : 'bg-gray-200'}`}
-                          onClick={() => setOverrideStatus('SUCCESS')}
-                        >Mark as Success</button>
-                        <button
-                          className={`px-4 py-2 rounded ${overrideStatus === 'FAILED' ? 'bg-red-500 text-white' : 'bg-gray-200'}`}
-                          onClick={() => setOverrideStatus('FAILED')}
-                        >Mark as Failed</button>
-                      </div>
-                      <div className="flex justify-end gap-2">
-                        <button
-                          className="px-4 py-2 rounded bg-gray-300"
-                          onClick={() => { setOverrideTx(null); setOverrideStatus(null); }}
-                        >Cancel</button>
-                        <button
-                          className="px-4 py-2 rounded bg-primary-500 text-white"
-                          disabled={!overrideStatus || overrideMutation.isLoading}
-                          onClick={() => overrideMutation.mutate({ transactionId: overrideTx.id, status: overrideStatus! })}
-                        >Confirm</button>
-                      </div>
-                    </div>
-                  </div>
-                )}
               </tbody>
             </table>
           )}
@@ -3746,5 +3669,6 @@ function SchemaRatesModal({ schema, allPGs, onClose }: { schema: any; allPGs: an
     </div>
   );
 }
+
 
 export default AdminDashboard;
