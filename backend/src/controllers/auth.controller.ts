@@ -2,6 +2,7 @@ import { Request, Response, NextFunction } from 'express';
 import { authService } from '../services/auth.service';
 import { securityService } from '../services/security.service';
 import { AuthRequest } from '../middleware/auth';
+import { logger } from '../utils/logger';
 
 // Helper to get client IP
 function getClientIP(req: Request): string {
@@ -17,7 +18,7 @@ export const authController = {
     try {
       const { email, password, isAdmin, captchaToken } = req.body;
       
-      console.log('[AUTH DEBUG] Login attempt:', { email, isAdmin: isAdmin, isAdminType: typeof isAdmin });
+      logger.info(`[AUTH DEBUG] Login attempt - Email: ${email}, isAdmin: ${isAdmin}, isAdminType: ${typeof isAdmin}, body:`, JSON.stringify(req.body));
       
       const result = await authService.login(email, password, {
         isAdminLogin: isAdmin,
