@@ -17,6 +17,8 @@ export const authController = {
     try {
       const { email, password, isAdmin, captchaToken } = req.body;
       
+      console.log('[AUTH DEBUG] Login attempt:', { email, isAdmin: isAdmin, isAdminType: typeof isAdmin });
+      
       const result = await authService.login(email, password, {
         isAdminLogin: isAdmin,
         captchaToken,
