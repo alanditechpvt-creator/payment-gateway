@@ -37,8 +37,7 @@ export const emailService = {
   },
   
   async sendOnboardingInvite(email: string, token: string, inviterName: string) {
-    const link = `${config.urls.mainApp}/onboarding/${token}`;
-    
+    const link = `${config.urls.adminApp}/onboarding/${token}`;
     // Log onboarding link for development when SMTP is not configured
     logger.info(`📧 Onboarding link for ${email}: ${link}`);
     
