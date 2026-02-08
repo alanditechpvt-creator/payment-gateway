@@ -225,6 +225,21 @@ export const rateService = {
       },
     });
     
+    // Also create/enable UserPGAssignment so the PG is available to the user
+    await prisma.userPGAssignment.upsert({
+      where: {
+        userId_pgId: { userId: targetUserId, pgId },
+      },
+      update: {
+        isEnabled: true,
+      },
+      create: {
+        userId: targetUserId,
+        pgId,
+        isEnabled: true,
+      },
+    });
+    
     return rate;
   },
   
