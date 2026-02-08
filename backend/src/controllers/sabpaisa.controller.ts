@@ -194,7 +194,7 @@ export const sabPaisaController = {
               <div class="success-icon">✅</div>
               <h1>Payment Successful!</h1>
               <p>Your payment has been processed successfully.</p>
-              <div class="amount">₹${result.amount || 'N/A'}</div>
+              <div class="amount">₹${result.paidAmount || result.amount || 'N/A'}</div>
               <div class="txn-id">
                 <strong>Transaction ID:</strong><br>
                 ${result.clientTxnId}
