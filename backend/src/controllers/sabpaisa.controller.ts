@@ -187,7 +187,16 @@ export const sabPaisaController = {
               p { color: #666; margin: 10px 0; }
               .txn-id { background: #f3f4f6; padding: 15px; border-radius: 10px; margin: 20px 0; font-family: monospace; word-break: break-all; }
               .amount { font-size: 32px; font-weight: bold; color: #1f2937; margin: 20px 0; }
+              .redirect-msg { font-size: 14px; color: #9ca3af; margin-top: 20px; }
+              .btn { display: inline-block; margin-top: 20px; padding: 12px 24px; background: #10b981; color: white; text-decoration: none; border-radius: 8px; font-weight: bold; }
+              .btn:hover { background: #059669; }
             </style>
+            <script>
+              // Auto-redirect after 3 seconds
+              setTimeout(function() {
+                window.location.href = '${process.env.FRONTEND_URL || 'https://pay.alandi.in'}/dashboard/transactions';
+              }, 3000);
+            </script>
           </head>
           <body>
             <div class="container">
@@ -199,8 +208,9 @@ export const sabPaisaController = {
                 <strong>Transaction ID:</strong><br>
                 ${result.clientTxnId}
               </div>
-              <p style="font-size: 12px; color: #9ca3af; margin-top: 30px;">
-                You can close this window now.<br>
+              <a href="${process.env.FRONTEND_URL || 'https://pay.alandi.in'}/dashboard/transactions" class="btn">View Transactions</a>
+              <p class="redirect-msg">
+                Redirecting to dashboard in 3 seconds...<br>
                 Thank you for your payment!
               </p>
             </div>
@@ -223,7 +233,16 @@ export const sabPaisaController = {
               p { color: #666; margin: 10px 0; }
               .txn-id { background: #f3f4f6; padding: 15px; border-radius: 10px; margin: 20px 0; font-family: monospace; word-break: break-all; }
               .reason { background: #fee2e2; color: #991b1b; padding: 15px; border-radius: 10px; margin: 20px 0; }
+              .btn { display: inline-block; margin-top: 20px; padding: 12px 24px; background: #ef4444; color: white; text-decoration: none; border-radius: 8px; font-weight: bold; }
+              .btn:hover { background: #dc2626; }
+              .redirect-msg { font-size: 14px; color: #9ca3af; margin-top: 20px; }
             </style>
+            <script>
+              // Auto-redirect after 5 seconds
+              setTimeout(function() {
+                window.location.href = '${process.env.FRONTEND_URL || 'https://pay.alandi.in'}/dashboard/transactions/new';
+              }, 5000);
+            </script>
           </head>
           <body>
             <div class="container">
@@ -238,9 +257,10 @@ export const sabPaisaController = {
                 <strong>Reason:</strong><br>
                 ${result.message || 'Payment failed'}
               </div>
-              <p style="font-size: 12px; color: #9ca3af; margin-top: 30px;">
-                Please contact support if you need assistance.<br>
-                You can close this window now.
+              <a href="${process.env.FRONTEND_URL || 'https://pay.alandi.in'}/dashboard/transactions/new" class="btn">Try Again</a>
+              <p class="redirect-msg">
+                Redirecting in 5 seconds...<br>
+                Please contact support if you need assistance.
               </p>
             </div>
           </body>
