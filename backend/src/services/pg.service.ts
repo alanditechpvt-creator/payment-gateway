@@ -137,32 +137,11 @@ export const pgService = {
         }));
     }
     
-    // Fallback: If no assignments, check if user's schema has PG rates
-    const userWithSchema = await prisma.user.findUnique({
-      where: { id: userId },
-      include: {
-        schema: {
-          include: {
-            pgRates: {
-              include: { paymentGateway: true },
-            },
-          },
-        },
-      },
-    });
+    // No fallback - only explicitly assigned PGs are returned
+    // Users must have PGs explicitly assigned via UserPGAssignment
+    return [];
     
-    if (userWithSchema?.schema?.pgRates?.length) {
-      return userWithSchema.schema.pgRates
-        .filter(r => r.paymentGateway.isActive)
-        .map(r => ({
-          ...r.paymentGateway,
-          customPayinRate: r.payinRate,
-          customPayoutRate: r.payoutRate,
-          supportsPayin: r.paymentGateway.supportedTypes?.includes('PAYIN') ?? true,
-          supportsPayout: r.paymentGateway.supportedTypes?.includes('PAYOUT') ?? true,
-        }));
-    }
-    
+    // Old fallback removed - schema PGs no longer auto-assigned
     // Final fallback for development: return all active PGs
     const allActivePGs = await prisma.paymentGateway.findMany({
       where: { isActive: true },

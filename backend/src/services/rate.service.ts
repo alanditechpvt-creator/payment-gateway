@@ -310,11 +310,13 @@ export const rateService = {
       })
     );
     
-    // Filter: only return PGs where user has a rate assigned (or is Admin)
+    // Filter: only return PGs where user has a rate assigned
+    // Admins always see all PGs for assignment purposes
     if (user.role === 'ADMIN') {
       return pgsWithRates;
     }
     
+    // Regular users only see PGs where they have rates > 0
     return pgsWithRates.filter(pg => pg.minPayinRate > 0 || pg.minPayoutRate > 0);
   },
   
