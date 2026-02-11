@@ -3,7 +3,7 @@ import jwt from 'jsonwebtoken';
 import { config } from '../config';
 import { JWTPayload, ROLE_HIERARCHY } from '../types';
 // import { UserRole } from '@prisma/client';
-type UserRole = 'ADMIN' | 'WHITE_LABEL' | 'MASTER_DISTRIBUTOR' | 'DISTRIBUTOR' | 'RETAILER';
+type UserRole = 'ADMIN' | 'SUPER_ADMIN' | 'WHITE_LABEL' | 'MASTER_DISTRIBUTOR' | 'DISTRIBUTOR' | 'RETAILER';
 import prisma from '../lib/prisma';
 
 export interface AuthRequest extends Request {

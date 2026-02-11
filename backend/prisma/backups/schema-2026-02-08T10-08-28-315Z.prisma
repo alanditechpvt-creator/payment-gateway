@@ -81,7 +81,6 @@ model User {
   notifications         Notification[]
   beneficiaries         Beneficiary[]
   announcements         Announcement[] @relation("AnnouncementCreator")
-  cachedBills           CachedBill[]
   
   @@index([role])
   @@index([status])
@@ -284,9 +283,6 @@ model SchemaPayinRate {
   channelId           String
   transactionChannel  TransactionChannel @relation(fields: [channelId], references: [id], onDelete: Cascade)
   
-  pgId                String
-  paymentGateway      PaymentGateway @relation(fields: [pgId], references: [id], onDelete: Cascade)
-  
   // Rate for this schema + channel combination (percentage)
   // e.g., 0.02 = 2%
   payinRate           Float     @default(0.02)
@@ -300,7 +296,6 @@ model SchemaPayinRate {
   @@unique([schemaId, channelId])
   @@index([schemaId])
   @@index([channelId])
-  @@index([pgId])
 }
 
 // User-level payin rate overrides (assigned by parent/MD)
@@ -592,31 +587,4 @@ model Announcement {
   
   @@index([isActive])
   @@index([createdAt])
-}
-
-// BBPS Bill Cache Model
-model CachedBill {
-  id            String    @id @default(uuid())
-  userId        String
-  user          User      @relation(fields: [userId], references: [id])
-  category      String    // CREDIT_CARD, ELECTRICITY, etc.
-  billerId      String
-  billerName    String
-  mobileNumber  String
-  cardLast4     String?
-  billNumber    String
-  billDate      DateTime
-  dueDate       DateTime
-  amount        Float?
-  customerName  String?
-  status        String    @default("PENDING") // PENDING, PAID, EXPIRED
-  expiresAt     DateTime
-  rawResponse   String?
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
-  
-  @@index([userId])
-  @@index([mobileNumber])
-  @@index([status])
-  @@index([expiresAt])
 }

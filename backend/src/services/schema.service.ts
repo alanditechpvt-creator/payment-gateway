@@ -94,10 +94,16 @@ export const schemaService = {
       return prisma.schema.findMany({
         where,
         include: {
-          pgRates: {
+          payinRates: {
             include: { 
+              transactionChannel: true,
               paymentGateway: true,
-              payoutSlabs: { orderBy: { minAmount: 'asc' } },
+            },
+          },
+          payoutConfig: {
+            include: {
+              paymentGateway: true,
+              slabs: { orderBy: { minAmount: 'asc' } },
             },
           },
           _count: { select: { users: true } },
@@ -110,10 +116,16 @@ export const schemaService = {
       prisma.schema.findMany({
         where,
         include: {
-          pgRates: {
+          payinRates: {
             include: { 
+              transactionChannel: true,
               paymentGateway: true,
-              payoutSlabs: { orderBy: { minAmount: 'asc' } },
+            },
+          },
+          payoutConfig: {
+            include: {
+              paymentGateway: true,
+              slabs: { orderBy: { minAmount: 'asc' } },
             },
           },
           createdBy: {
@@ -143,10 +155,16 @@ export const schemaService = {
     const schema = await prisma.schema.findUnique({
       where: { id: schemaId },
       include: {
-        pgRates: {
+        payinRates: {
           include: { 
+            transactionChannel: true,
             paymentGateway: true,
-            payoutSlabs: {
+          },
+        },
+        payoutConfig: {
+          include: {
+            paymentGateway: true,
+            slabs: {
               orderBy: { minAmount: 'asc' },
             },
           },

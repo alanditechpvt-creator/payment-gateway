@@ -213,31 +213,21 @@ export const announcementService = {
    * Get announcement statistics
    */
   async getStats() {
-    const now = new Date();
-
-    const [total, active, scheduled, expired] = await Promise.all([
+    const [total, active] = await Promise.all([
       prisma.announcement.count(),
       prisma.announcement.count({
         where: {
           isActive: true,
-          startDate: { lte: now },
-          OR: [{ endDate: null }, { endDate: { gt: now } }],
-        },
-      }),
-      prisma.announcement.count({
-        where: {
-          isActive: true,
-          startDate: { gt: now },
-        },
-      }),
-      prisma.announcement.count({
-        where: {
-          endDate: { lt: now },
         },
       }),
     ]);
 
-    return { total, active, scheduled, expired };
+    return { 
+      total, 
+      active, 
+      scheduled: 0, // Not supported in current schema (no startDate/endDate)
+      expired: 0    // Not supported in current schema (no startDate/endDate)
+    };
   },
 };
 

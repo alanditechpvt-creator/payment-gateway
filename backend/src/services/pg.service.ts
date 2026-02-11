@@ -15,9 +15,6 @@ export const pgService = {
         merchantId: data.merchantId,
         webhookSecret: data.webhookSecret,
         configuration: data.configuration ? JSON.stringify(data.configuration) : null,
-        baseRate: Number(data.baseRate),
-        minAmount: data.minAmount ? Number(data.minAmount) : null,
-        maxAmount: data.maxAmount ? Number(data.maxAmount) : null,
         supportedTypes: JSON.stringify(data.supportedTypes || ['PAYIN', 'PAYOUT']),
       },
     });
@@ -37,9 +34,6 @@ export const pgService = {
         webhookSecret: data.webhookSecret,
         configuration: data.configuration ? JSON.stringify(data.configuration) : undefined,
         isActive: data.isActive,
-        baseRate: data.baseRate ? Number(data.baseRate) : undefined,
-        minAmount: data.minAmount !== undefined ? (data.minAmount ? Number(data.minAmount) : null) : undefined,
-        maxAmount: data.maxAmount !== undefined ? (data.maxAmount ? Number(data.maxAmount) : null) : undefined,
         supportedTypes: data.supportedTypes ? JSON.stringify(data.supportedTypes) : undefined,
       },
     });

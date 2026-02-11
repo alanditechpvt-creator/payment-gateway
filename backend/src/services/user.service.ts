@@ -42,6 +42,21 @@ export const userService = {
       throw new AppError('Email already registered', 409);
     }
     
+    // Validate schema if provided
+    if (data.schemaId) {
+      const schema = await prisma.schema.findUnique({
+        where: { id: data.schemaId }
+      });
+      
+      if (!schema) {
+        throw new AppError('Invalid schema selected', 400);
+      }
+      
+      if (!schema.isActive) {
+        throw new AppError('Selected schema is not active', 400);
+      }
+    }
+    
     // Generate onboarding token
     const onboardingToken = uuidv4();
     const onboardingTokenExpiry = new Date();

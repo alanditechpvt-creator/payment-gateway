@@ -19,6 +19,8 @@ import sabpaisaRoutes from './sabpaisa.routes';
 import cashfreeRoutes from './cashfree.routes';
 import bbpsRoutes from './bbps.routes';
 import systemSettingsRoutes from './system-settings.routes';
+import channelAdminRoutes from './channelAdmin.routes';
+import userRatesRoutes from './userRates.routes';
 
 const router = Router();
 
@@ -47,6 +49,10 @@ router.use('/ledger', ledgerRoutes);
 router.use('/storage', storageRoutes);
 router.use('/card-types', cardTypeRoutes);
 router.use('/system-settings', systemSettingsRoutes);
+
+// New rate system routes
+router.use('/admin/channels', channelAdminRoutes);
+router.use('/user-rates', userRatesRoutes);
 
 // System configuration (for frontend to check PG mode)
 router.get('/config/pg-mode', (req, res) => {

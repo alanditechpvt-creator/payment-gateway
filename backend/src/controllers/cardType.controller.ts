@@ -1,14 +1,18 @@
 import { Response, NextFunction } from 'express';
-import { cardTypeService } from '../services/cardType.service';
 import { AuthRequest } from '../middleware/auth';
+import { AppError } from '../middleware/errorHandler';
 
+/**
+ * Card Type Controller - DEPRECATED
+ * Card types are now managed through Transaction Channels
+ * Use /api/admin/channels endpoints instead
+ */
 export const cardTypeController = {
-  // ==================== CARD TYPE CRUD ====================
+  // All methods return deprecation notices or empty data for backward compatibility
   
   async createCardType(req: AuthRequest, res: Response, next: NextFunction) {
     try {
-      const cardType = await cardTypeService.createCardType(req.body);
-      res.status(201).json({ success: true, data: cardType });
+      throw new AppError('Card Types are deprecated. Use POST /api/admin/channels', 410);
     } catch (error) {
       next(error);
     }
@@ -16,9 +20,7 @@ export const cardTypeController = {
   
   async updateCardType(req: AuthRequest, res: Response, next: NextFunction) {
     try {
-      const { cardTypeId } = req.params;
-      const cardType = await cardTypeService.updateCardType(cardTypeId, req.body);
-      res.json({ success: true, data: cardType });
+      throw new AppError('Card Types are deprecated. Use PUT /api/admin/channels/:id', 410);
     } catch (error) {
       next(error);
     }
@@ -26,9 +28,7 @@ export const cardTypeController = {
   
   async getCardTypesByPG(req: AuthRequest, res: Response, next: NextFunction) {
     try {
-      const { pgId } = req.params;
-      const cardTypes = await cardTypeService.getCardTypesByPG(pgId);
-      res.json({ success: true, data: cardTypes });
+      res.json({ success: true, data: [], message: 'Card Types deprecated. Use GET /api/admin/channels' });
     } catch (error) {
       next(error);
     }
@@ -36,14 +36,7 @@ export const cardTypeController = {
   
   async getAllCardTypes(req: AuthRequest, res: Response, next: NextFunction) {
     try {
-      const filters = {
-        pgId: req.query.pgId as string,
-        internalPG: req.query.internalPG as string,
-        cardNetwork: req.query.cardNetwork as string,
-        isActive: req.query.isActive === 'true' ? true : req.query.isActive === 'false' ? false : undefined,
-      };
-      const cardTypes = await cardTypeService.getAllCardTypes(filters);
-      res.json({ success: true, data: cardTypes });
+      res.json({ success: true, data: [], message: 'Card Types deprecated. Use GET /api/admin/channels' });
     } catch (error) {
       next(error);
     }
@@ -51,9 +44,7 @@ export const cardTypeController = {
   
   async getCardTypeById(req: AuthRequest, res: Response, next: NextFunction) {
     try {
-      const { cardTypeId } = req.params;
-      const cardType = await cardTypeService.getCardTypeById(cardTypeId);
-      res.json({ success: true, data: cardType });
+      throw new AppError('Card Types deprecated. Use GET /api/admin/channels/:id', 410);
     } catch (error) {
       next(error);
     }
@@ -61,10 +52,7 @@ export const cardTypeController = {
   
   async toggleCardTypeStatus(req: AuthRequest, res: Response, next: NextFunction) {
     try {
-      const { cardTypeId } = req.params;
-      const { isActive } = req.body;
-      const cardType = await cardTypeService.toggleCardTypeStatus(cardTypeId, isActive);
-      res.json({ success: true, data: cardType });
+      throw new AppError('Card Types deprecated. Use PUT /api/admin/channels/:id', 410);
     } catch (error) {
       next(error);
     }
@@ -72,22 +60,15 @@ export const cardTypeController = {
   
   async deleteCardType(req: AuthRequest, res: Response, next: NextFunction) {
     try {
-      const { cardTypeId } = req.params;
-      const result = await cardTypeService.deleteCardType(cardTypeId);
-      res.json({ success: true, ...result });
+      throw new AppError('Card Types deprecated. Use DELETE /api/admin/channels/:id', 410);
     } catch (error) {
       next(error);
     }
   },
   
-  // ==================== SCHEMA CARD TYPE RATES ====================
-  
   async setSchemaCardTypeRate(req: AuthRequest, res: Response, next: NextFunction) {
     try {
-      const { schemaId, cardTypeId } = req.params;
-      const { payinRate } = req.body;
-      const rate = await cardTypeService.setSchemaCardTypeRate(schemaId, cardTypeId, payinRate);
-      res.json({ success: true, data: rate });
+      throw new AppError('Schema Card Type Rates deprecated. Use POST /api/admin/channels/schemas/:schemaId/payin-rates', 410);
     } catch (error) {
       next(error);
     }
@@ -95,9 +76,7 @@ export const cardTypeController = {
   
   async getSchemaCardTypeRates(req: AuthRequest, res: Response, next: NextFunction) {
     try {
-      const { schemaId } = req.params;
-      const rates = await cardTypeService.getSchemaCardTypeRates(schemaId);
-      res.json({ success: true, data: rates });
+      res.json({ success: true, data: [], message: 'Use GET /api/admin/channels/schemas/:schemaId/payin-rates' });
     } catch (error) {
       next(error);
     }
@@ -105,28 +84,15 @@ export const cardTypeController = {
   
   async bulkSetSchemaCardTypeRates(req: AuthRequest, res: Response, next: NextFunction) {
     try {
-      const { schemaId } = req.params;
-      const { rates } = req.body;
-      const results = await cardTypeService.bulkSetSchemaCardTypeRates(schemaId, rates);
-      res.json({ success: true, data: results });
+      throw new AppError('Deprecated. Use new channels API', 410);
     } catch (error) {
       next(error);
     }
   },
   
-  // ==================== USER CARD TYPE RATES ====================
-  
   async assignUserCardTypeRate(req: AuthRequest, res: Response, next: NextFunction) {
     try {
-      const { userId, cardTypeId } = req.params;
-      const { payinRate } = req.body;
-      const rate = await cardTypeService.assignUserCardTypeRate(
-        req.user!.userId,
-        userId,
-        cardTypeId,
-        payinRate
-      );
-      res.json({ success: true, data: rate });
+      throw new AppError('User Card Type Rates deprecated. Use POST /api/user-rates/:userId/payin-rates', 410);
     } catch (error) {
       next(error);
     }
@@ -134,9 +100,7 @@ export const cardTypeController = {
   
   async getUserCardTypeRates(req: AuthRequest, res: Response, next: NextFunction) {
     try {
-      const { userId } = req.params;
-      const rates = await cardTypeService.getUserCardTypeRates(userId || req.user!.userId);
-      res.json({ success: true, data: rates });
+      res.json({ success: true, data: [], message: 'Use GET /api/user-rates/:userId/rates' });
     } catch (error) {
       next(error);
     }
@@ -144,8 +108,7 @@ export const cardTypeController = {
   
   async getMyCardTypeRates(req: AuthRequest, res: Response, next: NextFunction) {
     try {
-      const rates = await cardTypeService.getUserCardTypeRates(req.user!.userId);
-      res.json({ success: true, data: rates });
+      res.json({ success: true, data: [], message: 'Use GET /api/user-rates/:userId/rates' });
     } catch (error) {
       next(error);
     }
@@ -153,25 +116,15 @@ export const cardTypeController = {
   
   async getCardTypeRatesAssignedByMe(req: AuthRequest, res: Response, next: NextFunction) {
     try {
-      const rates = await cardTypeService.getCardTypeRatesAssignedByMe(req.user!.userId);
-      res.json({ success: true, data: rates });
+      res.json({ success: true, data: [] });
     } catch (error) {
       next(error);
     }
   },
   
-  // ==================== RATE LOOKUP ====================
-  
   async getTransactionRate(req: AuthRequest, res: Response, next: NextFunction) {
     try {
-      const { pgId } = req.params;
-      const { cardTypeCode } = req.query;
-      const result = await cardTypeService.getTransactionRate(
-        req.user!.userId,
-        pgId,
-        cardTypeCode as string
-      );
-      res.json({ success: true, data: result });
+      throw new AppError('Deprecated. Rates are now automatically calculated via channels', 410);
     } catch (error) {
       next(error);
     }
