@@ -30,6 +30,7 @@ const seedChannels = async () => {
       await prisma.transactionChannel.create({
         data: {
           paymentGateway: { connect: { id: pg.id } },
+          code: 'upi',
           name: 'UPI',
           category: 'UPI',
           transactionType: 'PAYIN',
@@ -43,6 +44,7 @@ const seedChannels = async () => {
       await prisma.transactionChannel.create({
         data: {
           paymentGateway: { connect: { id: pg.id } },
+          code: 'cards',
           name: 'Cards',
           category: 'CARDS',
           transactionType: 'PAYIN',
@@ -56,6 +58,7 @@ const seedChannels = async () => {
       await prisma.transactionChannel.create({
         data: {
           paymentGateway: { connect: { id: pg.id } },
+          code: 'netbanking',
           name: 'Netbanking',
           category: 'NETBANKING',
           transactionType: 'PAYIN',
@@ -69,6 +72,7 @@ const seedChannels = async () => {
       await prisma.transactionChannel.create({
         data: {
           paymentGateway: { connect: { id: pg.id } },
+          code: 'wallet',
           name: 'Wallet',
           category: 'WALLET',
           transactionType: 'PAYIN',
@@ -82,6 +86,7 @@ const seedChannels = async () => {
       await prisma.transactionChannel.create({
         data: {
           paymentGateway: { connect: { id: pg.id } },
+          code: 'bank_transfer',
           name: 'Bank Transfer',
           category: 'BANK_TRANSFER',
           transactionType: 'PAYOUT',
