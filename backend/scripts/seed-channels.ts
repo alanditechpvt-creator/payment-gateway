@@ -16,109 +16,79 @@ const seedChannels = async () => {
     for (const pg of pgs) {
       console.log(`\n📦 Creating channels for ${pg.name}...`);
 
+      // Check if channels already exist
+      const existing = await prisma.transactionChannel.findMany({
+        where: { pgId: pg.id }
+      });
+
+      if (existing.length > 0) {
+        console.log(`  ⏭️  ${existing.length} channels already exist, skipping`);
+        continue;
+      }
+
       // UPI Channel
-      await prisma.transactionChannel.upsert({
-        where: { 
-          pgId_name_transactionType: {
-            pgId: pg.id,
-            name: 'UPI',
-            transactionType: 'PAYIN'
-          }
-        },
-        create: {
-          pgId: pg.id,
+      await prisma.transactionChannel.create({
+        data: {
+          paymentGateway: { connect: { id: pg.id } },
           name: 'UPI',
           category: 'UPI',
           transactionType: 'PAYIN',
           isDefault: true,
           isActive: true,
           pgResponseCodes: JSON.stringify([]),
-        },
-        update: {}
+        }
       });
 
       // Cards Channel
-      await prisma.transactionChannel.upsert({
-        where: { 
-          pgId_name_transactionType: {
-            pgId: pg.id,
-            name: 'Cards',
-            transactionType: 'PAYIN'
-          }
-        },
-        create: {
-          pgId: pg.id,
+      await prisma.transactionChannel.create({
+        data: {
+          paymentGateway: { connect: { id: pg.id } },
           name: 'Cards',
           category: 'CARDS',
           transactionType: 'PAYIN',
           isDefault: false,
           isActive: true,
           pgResponseCodes: JSON.stringify([]),
-        },
-        update: {}
+        }
       });
 
       // Netbanking Channel
-      await prisma.transactionChannel.upsert({
-        where: { 
-          pgId_name_transactionType: {
-            pgId: pg.id,
-            name: 'Netbanking',
-            transactionType: 'PAYIN'
-          }
-        },
-        create: {
-          pgId: pg.id,
+      await prisma.transactionChannel.create({
+        data: {
+          paymentGateway: { connect: { id: pg.id } },
           name: 'Netbanking',
           category: 'NETBANKING',
           transactionType: 'PAYIN',
           isDefault: false,
           isActive: true,
           pgResponseCodes: JSON.stringify([]),
-        },
-        update: {}
+        }
       });
 
       // Wallet Channel
-      await prisma.transactionChannel.upsert({
-        where: { 
-          pgId_name_transactionType: {
-            pgId: pg.id,
-            name: 'Wallet',
-            transactionType: 'PAYIN'
-          }
-        },
-        create: {
-          pgId: pg.id,
+      await prisma.transactionChannel.create({
+        data: {
+          paymentGateway: { connect: { id: pg.id } },
           name: 'Wallet',
           category: 'WALLET',
           transactionType: 'PAYIN',
           isDefault: false,
           isActive: true,
           pgResponseCodes: JSON.stringify([]),
-        },
-        update: {}
+        }
       });
 
       // Payout Channel
-      await prisma.transactionChannel.upsert({
-        where: { 
-          pgId_name_transactionType: {
-            pgId: pg.id,
-            name: 'Bank Transfer',
-            transactionType: 'PAYOUT'
-          }
-        },
-        create: {
-          pgId: pg.id,
+      await prisma.transactionChannel.create({
+        data: {
+          paymentGateway: { connect: { id: pg.id } },
           name: 'Bank Transfer',
           category: 'BANK_TRANSFER',
           transactionType: 'PAYOUT',
           isDefault: true,
           isActive: true,
           pgResponseCodes: JSON.stringify([]),
-        },
-        update: {}
+        }
       });
 
       console.log(`✅ Created 5 channels for ${pg.name}`);
