@@ -59,8 +59,8 @@ export const bbpsService = {
   <agentId>${config.bbps.agentId}</agentId>
   <billerId>${params.billerId || ''}</billerId>
   <agentDeviceInfo>
-    <ip>127.0.0.1</ip>
-    <initChannel>AGT</initChannel>
+    <ip>72.61.254.18</ip>
+    <initChannel>${config.bbps.paymentChannel}</initChannel>
   </agentDeviceInfo>
   <customerInfo>
     <customerMobile>${params.mobileNumber}</customerMobile>
@@ -71,6 +71,13 @@ export const bbpsService = {
 
   // Encrypt the XML
   const encRequest = encryptBBPSRequest(xml, config.bbps.workingKey);
+  
+  logger.info('BBPS Encrypted Request:', {
+    length: encRequest.length,
+    sample: encRequest.substring(0, 100),
+    workingKey: config.bbps.workingKey,
+    accessCode: config.bbps.accessCode,
+  });
 
   // Write debug info to file
   const fs = require('fs');
@@ -78,19 +85,23 @@ export const bbpsService = {
     timestamp: new Date().toISOString(),
     url: config.bbps.endpoints.billFetch,
     accessCode: config.bbps.accessCode,
+    workingKey: config.bbps.workingKey,
     xml: xml,
     encRequestLength: encRequest.length,
     encRequestSample: encRequest.substring(0, 200),
+    fullEncRequest: encRequest,
   };
   fs.writeFileSync('./bbps-debug-request.json', JSON.stringify(debugInfo, null, 2));
 
   try {
-    // Try different request formats
-    const requestBody = `encRequest=${encodeURIComponent(encRequest)}`;
+    // BillAvenue format: POST with form data
+    const params = new URLSearchParams();
+    params.append('accessCode', config.bbps.accessCode);
+    params.append('encRequest', encRequest);
     
     const response = await axios.post(
-      `${config.bbps.endpoints.billFetch}?accessCode=${config.bbps.accessCode}`,
-      requestBody,
+      config.bbps.endpoints.billFetch,
+      params.toString(),
       {
         headers: {
           'Content-Type': 'application/x-www-form-urlencoded',

@@ -1,12 +1,15 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { userApi, transactionApi, pgApi, schemaApi, rateApi, announcementApi } from '@/lib/api';
 import { useAuthStore } from '@/lib/store';
 import { format } from 'date-fns';
 import toast from 'react-hot-toast';
+
+// API Base URL - use environment variable or default to localhost
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4100';
 import {
   UsersIcon,
   CreditCardIcon,
@@ -968,9 +971,6 @@ function GatewaysTab() {
     name: '',
     code: '',
     description: '',
-    baseRate: '0.02',
-    minAmount: '10',
-    maxAmount: '500000',
     supportedTypes: 'PAYIN,PAYOUT',
     isActive: true,
   });
@@ -1017,9 +1017,6 @@ function GatewaysTab() {
       name: '',
       code: '',
       description: '',
-      baseRate: '0.02',
-      minAmount: '10',
-      maxAmount: '500000',
       supportedTypes: 'PAYIN,PAYOUT',
       isActive: true,
     });
@@ -1032,9 +1029,6 @@ function GatewaysTab() {
       name: pg.name || '',
       code: pg.code || '',
       description: pg.description || '',
-      baseRate: String(pg.baseRate || 0.02),
-      minAmount: String(pg.minAmount || 10),
-      maxAmount: String(pg.maxAmount || 500000),
       supportedTypes: pg.supportedTypes || 'PAYIN,PAYOUT',
       isActive: pg.isActive,
     });
@@ -1050,9 +1044,7 @@ function GatewaysTab() {
     e.preventDefault();
     const data = {
       ...formData,
-      baseRate: parseFloat(formData.baseRate),
-      minAmount: parseFloat(formData.minAmount),
-      maxAmount: parseFloat(formData.maxAmount),
+      supportedTypes: formData.supportedTypes.split(','),
     };
     
     if (editingPG) {
@@ -1071,7 +1063,7 @@ function GatewaysTab() {
   }
 
   return (
-    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-6">
+    <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold">Payment Gateways</h1>
         <button onClick={openCreateModal} className="btn-primary">
@@ -1099,20 +1091,27 @@ function GatewaysTab() {
             </div>
             <div className="space-y-2 text-sm">
               <div className="flex justify-between">
-                <span className="text-white/50">Base Rate</span>
-                <span>{(Number(pg.baseRate) * 100).toFixed(2)}%</span>
+                <span className="text-white/50">Supported Types</span>
+                <span>
+                  {(() => {
+                    try {
+                      const types = typeof pg.supportedTypes === 'string' 
+                        ? JSON.parse(pg.supportedTypes) 
+                        : pg.supportedTypes;
+                      return Array.isArray(types) ? types.join(', ') : types;
+                    } catch {
+                      return pg.supportedTypes || 'PAYIN, PAYOUT';
+                    }
+                  })()}
+                </span>
               </div>
               <div className="flex justify-between">
-                <span className="text-white/50">Min Amount</span>
-                <span>₹{pg.minAmount || 'N/A'}</span>
+                <span className="text-white/50">Transaction Channels</span>
+                <span>{pg._count?.transactionChannels || 0} channels</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-white/50">Max Amount</span>
-                <span>₹{pg.maxAmount || 'N/A'}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-white/50">Supported</span>
-                <span>{pg.supportedTypes || 'PAYIN,PAYOUT'}</span>
+                <span className="text-white/50">User Assignments</span>
+                <span>{pg._count?.userAssignments || 0} users</span>
               </div>
             </div>
             <div className="mt-4 pt-4 border-t border-white/5 flex gap-2">
@@ -1180,53 +1179,17 @@ function GatewaysTab() {
                 />
               </div>
               
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-white/70 mb-1">Base Rate (%)</label>
-                  <input
-                    type="number"
-                    step="0.001"
-                    value={formData.baseRate}
-                    onChange={(e) => setFormData({ ...formData, baseRate: e.target.value })}
-                    className="w-full px-4 py-2 bg-white/5 border border-white/10 rounded-xl"
-                    placeholder="0.02"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-white/70 mb-1">Supported Types</label>
-                  <select
-                    value={formData.supportedTypes}
-                    onChange={(e) => setFormData({ ...formData, supportedTypes: e.target.value })}
-                    className="w-full px-4 py-2 bg-white/5 border border-white/10 rounded-xl"
-                  >
-                    <option value="PAYIN,PAYOUT">Both (PAYIN & PAYOUT)</option>
-                    <option value="PAYIN">PAYIN Only</option>
-                    <option value="PAYOUT">PAYOUT Only</option>
-                  </select>
-                </div>
-              </div>
-              
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-white/70 mb-1">Min Amount (₹)</label>
-                  <input
-                    type="number"
-                    value={formData.minAmount}
-                    onChange={(e) => setFormData({ ...formData, minAmount: e.target.value })}
-                    className="w-full px-4 py-2 bg-white/5 border border-white/10 rounded-xl"
-                    placeholder="10"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-white/70 mb-1">Max Amount (₹)</label>
-                  <input
-                    type="number"
-                    value={formData.maxAmount}
-                    onChange={(e) => setFormData({ ...formData, maxAmount: e.target.value })}
-                    className="w-full px-4 py-2 bg-white/5 border border-white/10 rounded-xl"
-                    placeholder="500000"
-                  />
-                </div>
+              <div>
+                <label className="block text-sm font-medium text-white/70 mb-1">Supported Types</label>
+                <select
+                  value={formData.supportedTypes}
+                  onChange={(e) => setFormData({ ...formData, supportedTypes: e.target.value })}
+                  className="w-full px-4 py-2 bg-white/5 border border-white/10 rounded-xl"
+                >
+                  <option value="PAYIN,PAYOUT">Both (PAYIN & PAYOUT)</option>
+                  <option value="PAYIN">PAYIN Only</option>
+                  <option value="PAYOUT">PAYOUT Only</option>
+                </select>
               </div>
               
               <div className="flex items-center gap-2">
@@ -1256,7 +1219,7 @@ function GatewaysTab() {
           </motion.div>
         </div>
       )}
-    </motion.div>
+    </div>
   );
 }
 
@@ -3045,7 +3008,7 @@ function SettingsTab() {
         <div className="grid grid-cols-3 gap-6">
           <div className="bg-white/5 rounded-xl p-4">
             <p className="text-sm text-white/50 mb-1">API URL</p>
-            <p className="font-mono text-sm">http://localhost:4100</p>
+            <p className="font-mono text-sm">{API_BASE_URL}</p>
           </div>
           <div className="bg-white/5 rounded-xl p-4">
             <p className="text-sm text-white/50 mb-1">Environment</p>
@@ -3281,106 +3244,230 @@ function GlobalLedgerTab({ users }: { users: any[] }) {
 }
 
 // Schema Rates Modal with full editing capability
+// NEW SCHEMA RATES MODAL - Transaction Channel Based
+// This replaces the old PG-based rate system
+// Replace the SchemaRatesModal function in AdminDashboard.tsx (lines 3244-3633) with this code
+
 function SchemaRatesModal({ schema, allPGs, onClose }: { schema: any; allPGs: any[]; onClose: () => void }) {
   const queryClient = useQueryClient();
   const [selectedPG, setSelectedPG] = useState<any>(null);
-  const [payinRate, setPayinRate] = useState('');
+  const [view, setView] = useState<'pg-list' | 'channels' | 'payout' | 'response-codes'>('pg-list');
+  const [editingChannel, setEditingChannel] = useState<any>(null);
+  const [channelRateInput, setChannelRateInput] = useState('');
+  const [editingResponseCodes, setEditingResponseCodes] = useState<any>(null);
+  const [responseCodesInput, setResponseCodesInput] = useState<string>('');
+  
+  console.log('[MODAL DEBUG] allPGs:', allPGs);
+  console.log('[MODAL DEBUG] selectedPG:', selectedPG);
+  console.log('[MODAL DEBUG] view:', view);
+  
+  // Payout configuration states
   const [payoutChargeType, setPayoutChargeType] = useState<'PERCENTAGE' | 'SLAB'>('SLAB');
   const [payoutRate, setPayoutRate] = useState('');
-  const [slabs, setSlabs] = useState<Array<{ minAmount: string; maxAmount: string; flatFee: string }>>([]);
-  const [showSlabEditor, setShowSlabEditor] = useState(false);
+  const [slabs, setSlabs] = useState<Array<{ minAmount: string; maxAmount: string; flatFee: string }>>([
+    { minAmount: '0', maxAmount: '5000', flatFee: '10' },
+  ]);
 
-  // Add rate mutation
-  const addRateMutation = useMutation({
-    mutationFn: (data: { pgId: string; payinRate: number; payoutRate: number }) =>
-      schemaApi.addPGRate(schema.id, data),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['admin-schemas'] });
-      toast.success('Rate added successfully!');
-      setSelectedPG(null);
+  // Fetch all channels for the selected PG
+  const { data: channels, isLoading: channelsLoading } = useQuery({
+    queryKey: ['channels', selectedPG?.id],
+    queryFn: async () => {
+      if (!selectedPG || !selectedPG.id) {
+        console.log('[DEBUG] No selectedPG or PG ID:', selectedPG);
+        return [];
+      }
+      console.log('[DEBUG] Fetching channels for PG:', selectedPG.id, selectedPG.name);
+      const token = localStorage.getItem('adminAccessToken');
+      const response = await fetch(
+        `${API_BASE_URL}/admin/channels?pgId=${selectedPG.id}`,
+        {
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json'
+          }
+        }
+      );
+      if (!response.ok) throw new Error('Failed to fetch channels');
+      const result = await response.json();
+      console.log('[DEBUG] Channels response:', result);
+      console.log('[DEBUG] result.data:', result.data);
+      console.log('[DEBUG] result.data.channels:', result.data.channels);
+      console.log('[DEBUG] Array check:', Array.isArray(result.data.channels));
+      return result.data.channels || [];
     },
-    onError: (error: any) => {
-      toast.error(error.response?.data?.error || 'Failed to add rate');
+    enabled: !!selectedPG && !!selectedPG.id,
+  });
+
+  // Fetch schema payin rates
+  const { data: schemaRatesData, refetch: refetchRates } = useQuery({
+    queryKey: ['schema-rates', schema.id],
+    queryFn: async () => {
+      const token = localStorage.getItem('adminAccessToken');
+      const response = await fetch(
+        `${API_BASE_URL}/admin/channels/schemas/${schema.id}/payin-rates`,
+        {
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json'
+          }
+        }
+      );
+      if (!response.ok) throw new Error('Failed to fetch schema rates');
+      const result = await response.json();
+      console.log('[DEBUG] Schema rates response:', result);
+      return result.data || {};
     },
   });
 
-  // Update payout settings mutation
-  const updatePayoutMutation = useMutation({
-    mutationFn: ({ schemaPGRateId, data }: { schemaPGRateId: string; data: any }) =>
-      schemaApi.updatePayoutSettings(schemaPGRateId, data),
+  // Fetch payout config
+  const { data: payoutConfig, refetch: refetchPayout } = useQuery({
+    queryKey: ['schema-payout', schema.id, selectedPG?.id],
+    queryFn: async () => {
+      if (!selectedPG) return null;
+      const token = localStorage.getItem('adminAccessToken');
+      const response = await fetch(
+        `${API_BASE_URL}/admin/channels/schemas/${schema.id}/payout-config/${selectedPG.id}`,
+        {
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json'
+          }
+        }
+      );
+      if (!response.ok) return null;
+      const result = await response.json();
+      return result.data;
+    },
+    enabled: !!selectedPG,
+  });
+
+  // Initialize payout form when payout config loads
+  useEffect(() => {
+    if (payoutConfig) {
+      setPayoutChargeType(payoutConfig.chargeType || 'SLAB');
+      if (payoutConfig.chargeType === 'PERCENTAGE') {
+        setPayoutRate((payoutConfig.payoutRate * 100).toString());
+      }
+      if (payoutConfig.slabs && payoutConfig.slabs.length > 0) {
+        setSlabs(payoutConfig.slabs.map((s: any) => ({
+          minAmount: s.minAmount.toString(),
+          maxAmount: s.maxAmount ? s.maxAmount.toString() : '',
+          flatFee: s.flatCharge.toString(),
+        })));
+      }
+    }
+  }, [payoutConfig]);
+
+  // Mutation for setting channel payin rate
+  const setRateMutation = useMutation({
+    mutationFn: async ({ channelId, rate }: { channelId: string; rate: number }) => {
+      const token = localStorage.getItem('adminAccessToken');
+      const response = await fetch(
+        `${API_BASE_URL}/admin/channels/schemas/${schema.id}/payin-rates`,
+        {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ channelId, payinRate: rate / 100 }),
+        }
+      );
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.error || 'Failed to set rate');
+      }
+      return response.json();
+    },
     onSuccess: () => {
+      refetchRates();
       queryClient.invalidateQueries({ queryKey: ['admin-schemas'] });
-      toast.success('Payout settings updated!');
-      setShowSlabEditor(false);
+      setEditingChannel(null);
+      setChannelRateInput('');
+      toast.success('Channel rate updated!');
     },
     onError: (error: any) => {
-      toast.error(error.response?.data?.error || 'Failed to update payout settings');
+      toast.error(error.message || 'Failed to set rate');
     },
   });
 
-  const openPGEditor = (pg: any) => {
-    const existingRate = schema.pgRates?.find((r: any) => r.pgId === pg.id);
-    setSelectedPG({ ...pg, existingRate });
-    setPayinRate(existingRate ? (Number(existingRate.payinRate) * 100).toString() : (Number(pg.baseRate) * 100).toString());
-    setPayoutChargeType(existingRate?.payoutChargeType || 'SLAB');
-    setPayoutRate(existingRate ? (Number(existingRate.payoutRate) * 100).toString() : '0');
-    
-    // Load existing slabs (database uses flatCharge, UI uses flatFee)
-    if (existingRate?.payoutSlabs?.length > 0) {
-      setSlabs(existingRate.payoutSlabs.map((s: any) => ({
-        minAmount: s.minAmount.toString(),
-        maxAmount: s.maxAmount ? s.maxAmount.toString() : '',
-        flatFee: (s.flatCharge || s.flatFee || 0).toString(), // Support both field names
-      })));
-    } else {
-      // Default slabs
-      setSlabs([
-        { minAmount: '0', maxAmount: '10000', flatFee: '10' },
-        { minAmount: '10001', maxAmount: '50000', flatFee: '12' },
-        { minAmount: '50001', maxAmount: '200000', flatFee: '18' },
-        { minAmount: '200001', maxAmount: '', flatFee: '25' },
-      ]);
-    }
-  };
+  // Mutation for setting payout config
+  const setPayoutMutation = useMutation({
+    mutationFn: async () => {
+      const token = localStorage.getItem('adminAccessToken');
+      const response = await fetch(
+        `${API_BASE_URL}/admin/channels/schemas/${schema.id}/payout-config`,
+        {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            pgId: selectedPG.id,
+            chargeType: payoutChargeType,
+            payoutRate: payoutChargeType === 'PERCENTAGE' ? parseFloat(payoutRate) / 100 : null,
+            slabs: payoutChargeType === 'SLAB' ? slabs.map(s => ({
+              minAmount: parseFloat(s.minAmount) || 0,
+              maxAmount: s.maxAmount ? parseFloat(s.maxAmount) : null,
+              flatCharge: parseFloat(s.flatFee) || 0,
+            })) : [],
+          }),
+        }
+      );
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.error || 'Failed to set payout config');
+      }
+      return response.json();
+    },
+    onSuccess: () => {
+      refetchPayout();
+      queryClient.invalidateQueries({ queryKey: ['admin-schemas'] });
+      toast.success('Payout configuration updated!');
+    },
+    onError: (error: any) => {
+      toast.error(error.message || 'Failed to set payout config');
+    },
+  });
 
-  const handleSaveRate = () => {
-    if (!selectedPG) return;
-    const payinRateNum = parseFloat(payinRate) / 100;
-    const payoutRateNum = parseFloat(payoutRate) / 100;
-    
-    addRateMutation.mutate({
-      pgId: selectedPG.id,
-      payinRate: payinRateNum,
-      payoutRate: payoutRateNum,
-    });
-  };
+  // Mutation for updating response codes
+  const updateResponseCodesMutation = useMutation({
+    mutationFn: async ({ channelId, responseCodes }: { channelId: string; responseCodes: string[] }) => {
+      const token = localStorage.getItem('adminAccessToken');
+      const response = await fetch(
+        `${API_BASE_URL}/admin/channels/${channelId}/response-codes`,
+        {
+          method: 'PATCH',
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ responseCodes }),
+        }
+      );
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.error || 'Failed to update response codes');
+      }
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['channels', selectedPG?.id] });
+      setEditingResponseCodes(null);
+      setResponseCodesInput('');
+      toast.success('Response codes updated!');
+    },
+    onError: (error: any) => {
+      toast.error(error.message || 'Failed to update response codes');
+    },
+  });
 
-  const handleSavePayoutSlabs = () => {
-    if (!selectedPG?.existingRate) {
-      toast.error('Please save the payin rate first');
-      return;
-    }
-
-    const formattedSlabs = slabs.map(s => ({
-      minAmount: parseFloat(s.minAmount) || 0,
-      maxAmount: s.maxAmount ? parseFloat(s.maxAmount) : null,
-      flatFee: parseFloat(s.flatFee) || 0,
-    }));
-
-    updatePayoutMutation.mutate({
-      schemaPGRateId: selectedPG.existingRate.id,
-      data: {
-        payoutChargeType,
-        payoutRate: payoutChargeType === 'PERCENTAGE' ? parseFloat(payoutRate) / 100 : 0,
-        slabs: payoutChargeType === 'SLAB' ? formattedSlabs : undefined,
-      },
-    });
-  };
-
+  // Helper functions
   const addSlab = () => {
     const lastSlab = slabs[slabs.length - 1];
-    const newMin = lastSlab?.maxAmount ? (parseInt(lastSlab.maxAmount) + 1).toString() : '0';
-    setSlabs([...slabs, { minAmount: newMin, maxAmount: '', flatFee: '' }]);
+    const newMin = lastSlab.maxAmount ? (parseFloat(lastSlab.maxAmount) + 0.01).toString() : '0';
+    setSlabs([...slabs, { minAmount: newMin, maxAmount: '', flatFee: '10' }]);
   };
 
   const removeSlab = (index: number) => {
@@ -3393,272 +3480,572 @@ function SchemaRatesModal({ schema, allPGs, onClose }: { schema: any; allPGs: an
     setSlabs(newSlabs);
   };
 
+  const handleSaveChannelRate = () => {
+    if (!editingChannel || !channelRateInput) {
+      toast.error('Please enter a valid rate');
+      return;
+    }
+    const rate = parseFloat(channelRateInput);
+    if (rate < 0) {
+      toast.error('Rate must be positive');
+      return;
+    }
+    setRateMutation.mutate({ channelId: editingChannel.id, rate });
+  };
+
+  const handleSavePayoutConfig = () => {
+    if (payoutChargeType === 'PERCENTAGE' && (!payoutRate || parseFloat(payoutRate) < 0)) {
+      toast.error('Please enter a valid payout rate');
+      return;
+    }
+    if (payoutChargeType === 'SLAB' && slabs.length === 0) {
+      toast.error('Please add at least one slab');
+      return;
+    }
+    setPayoutMutation.mutate();
+  };
+
+  // Get current rate for a channel
+  const getChannelRate = (channelId: string) => {
+    console.log('[DEBUG] getChannelRate - channelId:', channelId, 'schemaRatesData:', schemaRatesData);
+    if (!schemaRatesData?.rates) return null;
+    const rateConfig = schemaRatesData.rates.find((r: any) => r.channelId === channelId);
+    console.log('[DEBUG] Found rate config:', rateConfig);
+    return rateConfig ? (rateConfig.payinRate * 100).toFixed(2) : null;
+  };
+
+  // Group channels by category
+  const groupedChannels = channels?.reduce((acc: any, channel: any) => {
+    const category = channel.category || 'Other';
+    if (!acc[category]) acc[category] = [];
+    acc[category].push(channel);
+    return acc;
+  }, {}) || {};
+
+  // Count configured payin channels for a PG
+  const getConfiguredPayinCount = (pgId: string) => {
+    if (!schemaRatesData?.rates) return 0;
+    // Count rates that belong to this PG
+    return schemaRatesData.rates.filter((r: any) => r.pgId === pgId).length;
+  };
+
   return (
-    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50">
-      <motion.div
-        initial={{ opacity: 0, scale: 0.95 }}
-        animate={{ opacity: 1, scale: 1 }}
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50" onClick={onClose}>
+      <motion.div 
         className="bg-[#1a1a2e] rounded-2xl p-6 w-full max-w-4xl border border-white/10 max-h-[90vh] overflow-y-auto"
+        onClick={(e) => e.stopPropagation()}
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
       >
-        <div className="flex items-center justify-between mb-6">
-          <h2 className="text-xl font-bold">PG Rates - {schema.name}</h2>
-          <button onClick={onClose} className="p-2 hover:bg-white/10 rounded-lg">
-            <XMarkIcon className="w-5 h-5" />
+        <div className="flex items-start justify-between mb-6">
+          <div>
+            <h3 className="text-xl font-bold">Configure Channel Rates</h3>
+            <p className="text-white/60 text-sm mt-1">
+              {selectedPG ? `${selectedPG.name} • ` : ''}{schema.name} Schema
+            </p>
+          </div>
+          <button onClick={onClose} className="text-white/40 hover:text-white">
+            <XMarkIcon className="w-6 h-6" />
           </button>
         </div>
 
-        {!selectedPG ? (
-          // PG List View
-          <div className="space-y-4">
-            <p className="text-white/50 text-sm">
-              Click on a payment gateway to configure PAYIN rate and PAYOUT slabs.
-            </p>
-
-            <div className="grid gap-4">
-              {allPGs.map((pg: any) => {
-                const existingRate = schema.pgRates?.find((r: any) => r.pgId === pg.id);
-                const hasSlabs = existingRate?.payoutSlabs?.length > 0;
+        {view === 'pg-list' ? (
+          // PG Selection View
+          <div>
+            <p className="text-white/60 mb-4">Select a Payment Gateway to configure channel rates:</p>
+            <div className="grid gap-3">
+              {allPGs.map((pg) => {
+                const configuredPayin = getConfiguredPayinCount(pg.id);
                 
                 return (
-                  <div 
-                    key={pg.id} 
-                    className="bg-white/5 rounded-xl p-4 hover:bg-white/10 cursor-pointer transition-all"
-                    onClick={() => openPGEditor(pg)}
+                  <div
+                    key={pg.id}
+                    className="bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl p-4 transition-all"
                   >
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <p className="font-semibold">{pg.name}</p>
-                        <p className="text-xs text-white/40 font-mono">{pg.code}</p>
-                      </div>
-                      <div className="flex items-center gap-4">
-                        <div className="text-right">
-                          <p className="text-xs text-white/50">Payin Rate</p>
-                          <p className="font-mono text-emerald-400">
-                            {existingRate ? (Number(existingRate.payinRate) * 100).toFixed(2) : (Number(pg.baseRate) * 100).toFixed(2)}%
-                          </p>
-                        </div>
-                        <div className="text-right">
-                          <p className="text-xs text-white/50">Payout</p>
-                          <p className="font-mono text-blue-400">
-                            {existingRate?.payoutChargeType === 'PERCENTAGE' 
-                              ? `${(Number(existingRate.payoutRate) * 100).toFixed(2)}%`
-                              : hasSlabs ? `${existingRate.payoutSlabs.length} Slabs` : 'Not Set'
-                            }
-                          </p>
-                        </div>
-                        <div>
-                          {existingRate ? (
-                            <span className="badge badge-success">Configured</span>
-                          ) : (
-                            <span className="badge" style={{ background: 'rgba(255,255,255,0.1)' }}>Default</span>
-                          )}
-                        </div>
-                        <PencilIcon className="w-5 h-5 text-white/40" />
+                    <div className="flex items-start justify-between mb-3">
+                      <div className="flex-1">
+                        <h4 className="font-semibold">{pg.name}</h4>
+                        <p className="text-xs text-white/40 font-mono mt-0.5">{pg.code}</p>
                       </div>
                     </div>
                     
-                    {/* Show slabs preview if configured */}
-                    {hasSlabs && (
-                      <div className="mt-3 pt-3 border-t border-white/5">
-                        <p className="text-xs text-white/50 mb-2">Payout Slabs:</p>
-                        <div className="flex flex-wrap gap-2">
-                          {existingRate.payoutSlabs.slice(0, 4).map((slab: any, idx: number) => (
-                            <span key={idx} className="text-xs bg-blue-500/10 text-blue-400 px-2 py-1 rounded">
-                              ₹{Number(slab.minAmount).toLocaleString()}-{slab.maxAmount ? `₹${Number(slab.maxAmount).toLocaleString()}` : '∞'}: ₹{Number(slab.flatCharge || slab.flatFee || 0)}
-                            </span>
-                          ))}
-                          {existingRate.payoutSlabs.length > 4 && (
-                            <span className="text-xs text-white/40">+{existingRate.payoutSlabs.length - 4} more</span>
+                    <div className="grid grid-cols-2 gap-3">
+                      <button
+                        onClick={() => {
+                          console.log('[BUTTON CLICK] Setting selectedPG:', pg);
+                          console.log('[BUTTON CLICK] PG has id?', pg.id);
+                          setSelectedPG(pg);
+                          setView('channels');
+                        }}
+                        className="bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 rounded-lg p-3 text-left transition-all"
+                      >
+                        <div className="flex items-center justify-between mb-1">
+                          <span className="text-sm font-medium text-emerald-400">PAYIN Channels</span>
+                          {configuredPayin > 0 && (
+                            <span className="text-xs text-emerald-400/60">{configuredPayin} configured</span>
                           )}
                         </div>
-                      </div>
-                    )}
+                        <p className="text-xs text-white/40">Configure payin rates per channel</p>
+                      </button>
+                      
+                      <button
+                        onClick={() => {
+                          setSelectedPG(pg);
+                          setView('payout');
+                        }}
+                        className="bg-blue-500/10 hover:bg-blue-500/20 border border-blue-500/30 rounded-lg p-3 text-left transition-all"
+                      >
+                        <div className="flex items-center justify-between mb-1">
+                          <span className="text-sm font-medium text-blue-400">PAYOUT Config</span>
+                        </div>
+                        <p className="text-xs text-white/40">Configure payout slabs</p>
+                      </button>
+                    </div>
                   </div>
                 );
               })}
             </div>
           </div>
-        ) : (
-          // PG Editor View
+        ) : view === 'channels' ? (
+          // Channel Configuration View
           <div className="space-y-6">
             <button 
-              onClick={() => setSelectedPG(null)} 
+              onClick={() => {
+                setView('pg-list');
+                setSelectedPG(null);
+              }} 
               className="flex items-center gap-2 text-white/60 hover:text-white"
             >
               <ArrowLeftIcon className="w-4 h-4" />
-              Back to list
+              Back to gateways
+            </button>
+
+            <div className="flex items-center justify-between">
+              <div className="bg-white/5 rounded-xl p-4 flex-1">
+                <h3 className="font-semibold text-lg mb-1">{selectedPG.name} - PAYIN Channels</h3>
+                <p className="text-xs text-white/40">Configure rates for each transaction channel</p>
+              </div>
+              <button
+                onClick={() => setView('response-codes')}
+                className="ml-4 px-4 py-2 bg-purple-500/20 text-purple-400 border border-purple-500/30 rounded-lg hover:bg-purple-500/30 transition-all text-sm flex items-center gap-2"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                </svg>
+                Response Codes
+              </button>
+            </div>
+
+            {channelsLoading ? (
+              <div className="text-center py-8 text-white/40">
+                Loading channels...
+                <div className="text-xs mt-2">selectedPG: {selectedPG?.name} (ID: {selectedPG?.id || 'UNDEFINED'})</div>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {Object.entries(groupedChannels)
+                  .filter(([_, channels]: any) => channels.some((c: any) => c.transactionType === 'PAYIN'))
+                  .map(([category, categoryChannels]: any) => {
+                    const payinChannels = categoryChannels.filter((c: any) => c.transactionType === 'PAYIN');
+                    if (payinChannels.length === 0) return null;
+
+                    return (
+                      <div key={category} className="bg-white/5 rounded-xl p-4">
+                        <h4 className="font-semibold text-emerald-400 mb-3 flex items-center gap-2">
+                          {category}
+                          <span className="text-xs text-white/40 font-normal">({payinChannels.length} channels)</span>
+                        </h4>
+                        <div className="space-y-2">
+                          {payinChannels.map((channel: any) => {
+                            const currentRate = getChannelRate(channel.id);
+                            const baseCost = (channel.baseCost * 100).toFixed(2);
+                            const isEditing = editingChannel?.id === channel.id;
+
+                            return (
+                              <div
+                                key={channel.id}
+                                className="flex items-center justify-between p-3 bg-white/5 rounded-lg hover:bg-white/10 transition-all"
+                              >
+                                <div className="flex-1">
+                                  <div className="flex items-center gap-2">
+                                    <span className="font-medium">{channel.name}</span>
+                                    <span className="text-xs text-white/40 font-mono">{channel.code}</span>
+                                  </div>
+                                  <p className="text-xs text-white/40 mt-0.5">
+                                    Base Cost: {baseCost}%
+                                  </p>
+                                </div>
+
+                                {isEditing ? (
+                                  <div className="flex items-center gap-2">
+                                    <input
+                                      type="number"
+                                      step="0.01"
+                                      value={channelRateInput}
+                                      onChange={(e) => setChannelRateInput(e.target.value)}
+                                      className="w-24 px-3 py-1.5 bg-white/10 border border-white/20 rounded text-right"
+                                      placeholder="0.00"
+                                      autoFocus
+                                    />
+                                    <span className="text-white/60">%</span>
+                                    <button
+                                      onClick={handleSaveChannelRate}
+                                      disabled={setRateMutation.isPending}
+                                      className="px-3 py-1.5 bg-emerald-500 text-white rounded text-sm hover:bg-emerald-600 disabled:opacity-50"
+                                    >
+                                      {setRateMutation.isPending ? 'Saving...' : 'Save'}
+                                    </button>
+                                    <button
+                                      onClick={() => {
+                                        setEditingChannel(null);
+                                        setChannelRateInput('');
+                                      }}
+                                      className="px-3 py-1.5 bg-white/10 text-white/60 rounded text-sm hover:bg-white/20"
+                                    >
+                                      Cancel
+                                    </button>
+                                  </div>
+                                ) : (
+                                  <div className="flex items-center gap-4">
+                                    <div className="text-right">
+                                      <p className="text-xs text-white/50">Current Rate</p>
+                                      <p className="font-mono text-lg text-emerald-400">
+                                        {currentRate ? `${currentRate}%` : 'Not Set'}
+                                      </p>
+                                    </div>
+                                    <button
+                                      onClick={() => {
+                                        setEditingChannel(channel);
+                                        setChannelRateInput(currentRate || baseCost);
+                                      }}
+                                      className="p-2 hover:bg-white/10 rounded transition-all"
+                                    >
+                                      <PencilIcon className="w-4 h-4 text-white/60" />
+                                    </button>
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    );
+                  })}
+              </div>
+            )}
+          </div>
+        ) : view === 'payout' ? (
+          // Payout Configuration View
+          <div className="space-y-6">
+            <button 
+              onClick={() => {
+                setView('pg-list');
+                setSelectedPG(null);
+              }} 
+              className="flex items-center gap-2 text-white/60 hover:text-white"
+            >
+              <ArrowLeftIcon className="w-4 h-4" />
+              Back to gateways
             </button>
 
             <div className="bg-white/5 rounded-xl p-4">
-              <h3 className="font-semibold text-lg mb-1">{selectedPG.name}</h3>
-              <p className="text-xs text-white/40 font-mono">{selectedPG.code}</p>
+              <h3 className="font-semibold text-lg mb-1">{selectedPG.name} - PAYOUT Configuration</h3>
+              <p className="text-xs text-white/40">Configure payout charges for this gateway</p>
             </div>
 
-            {/* PAYIN Rate Section */}
-            <div className="bg-emerald-500/5 border border-emerald-500/20 rounded-xl p-4">
-              <h4 className="font-semibold text-emerald-400 mb-4">PAYIN Rate (Commission %)</h4>
-              <div className="flex items-end gap-4">
-                <div className="flex-1">
-                  <label className="block text-sm text-white/60 mb-1">Rate (%)</label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    value={payinRate}
-                    onChange={(e) => setPayinRate(e.target.value)}
-                    className="w-full px-4 py-2 bg-white/5 border border-white/10 rounded-lg"
-                    placeholder="e.g., 2.5"
-                  />
-                </div>
-                <button
-                  onClick={handleSaveRate}
-                  disabled={addRateMutation.isPending}
-                  className="px-6 py-2 bg-emerald-500 text-white rounded-lg hover:bg-emerald-600 disabled:opacity-50"
-                >
-                  {addRateMutation.isPending ? 'Saving...' : 'Save Payin Rate'}
-                </button>
-              </div>
-            </div>
-
-            {/* PAYOUT Section */}
             <div className="bg-blue-500/5 border border-blue-500/20 rounded-xl p-4">
-              <h4 className="font-semibold text-blue-400 mb-4">PAYOUT Charges</h4>
+              <h4 className="font-semibold text-blue-400 mb-4">Payout Charges</h4>
               
-              {!selectedPG.existingRate ? (
-                <p className="text-yellow-400 text-sm">
-                  ⚠️ Save the PAYIN rate first to configure PAYOUT slabs.
-                </p>
+              <div className="flex items-center gap-4 mb-4">
+                <label className="flex items-center gap-2">
+                  <input
+                    type="radio"
+                    name="payoutType"
+                    checked={payoutChargeType === 'SLAB'}
+                    onChange={() => setPayoutChargeType('SLAB')}
+                    className="w-4 h-4"
+                  />
+                  <span>Slab-based (Flat Fee)</span>
+                </label>
+                <label className="flex items-center gap-2">
+                  <input
+                    type="radio"
+                    name="payoutType"
+                    checked={payoutChargeType === 'PERCENTAGE'}
+                    onChange={() => setPayoutChargeType('PERCENTAGE')}
+                    className="w-4 h-4"
+                  />
+                  <span>Percentage-based</span>
+                </label>
+              </div>
+
+              {payoutChargeType === 'PERCENTAGE' ? (
+                <div className="flex items-end gap-4">
+                  <div className="flex-1">
+                    <label className="block text-sm text-white/60 mb-1">Payout Rate (%)</label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      value={payoutRate}
+                      onChange={(e) => setPayoutRate(e.target.value)}
+                      className="w-full px-4 py-2 bg-white/5 border border-white/10 rounded-lg"
+                      placeholder="e.g., 1.5"
+                    />
+                  </div>
+                  <button
+                    onClick={handleSavePayoutConfig}
+                    disabled={setPayoutMutation.isPending}
+                    className="px-6 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:opacity-50"
+                  >
+                    {setPayoutMutation.isPending ? 'Saving...' : 'Save'}
+                  </button>
+                </div>
               ) : (
-                <>
-                  <div className="flex items-center gap-4 mb-4">
-                    <label className="flex items-center gap-2">
-                      <input
-                        type="radio"
-                        name="payoutType"
-                        checked={payoutChargeType === 'SLAB'}
-                        onChange={() => setPayoutChargeType('SLAB')}
-                        className="w-4 h-4"
-                      />
-                      <span>Slab-based (Flat Fee)</span>
-                    </label>
-                    <label className="flex items-center gap-2">
-                      <input
-                        type="radio"
-                        name="payoutType"
-                        checked={payoutChargeType === 'PERCENTAGE'}
-                        onChange={() => setPayoutChargeType('PERCENTAGE')}
-                        className="w-4 h-4"
-                      />
-                      <span>Percentage-based</span>
-                    </label>
+                <div className="space-y-4">
+                  <p className="text-sm text-white/50">
+                    Configure flat fee charges based on transaction amount ranges.
+                  </p>
+
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="border-b border-white/10">
+                          <th className="text-left py-2 text-white/50">Min Amount (₹)</th>
+                          <th className="text-left py-2 text-white/50">Max Amount (₹)</th>
+                          <th className="text-left py-2 text-white/50">Flat Fee (₹)</th>
+                          <th className="py-2"></th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {slabs.map((slab, idx) => (
+                          <tr key={idx} className="border-b border-white/5">
+                            <td className="py-2">
+                              <input
+                                type="number"
+                                value={slab.minAmount}
+                                onChange={(e) => updateSlab(idx, 'minAmount', e.target.value)}
+                                className="w-full px-3 py-1.5 bg-white/5 border border-white/10 rounded"
+                                placeholder="0"
+                              />
+                            </td>
+                            <td className="py-2">
+                              <input
+                                type="number"
+                                value={slab.maxAmount}
+                                onChange={(e) => updateSlab(idx, 'maxAmount', e.target.value)}
+                                className="w-full px-3 py-1.5 bg-white/5 border border-white/10 rounded"
+                                placeholder="Unlimited"
+                              />
+                            </td>
+                            <td className="py-2">
+                              <input
+                                type="number"
+                                value={slab.flatFee}
+                                onChange={(e) => updateSlab(idx, 'flatFee', e.target.value)}
+                                className="w-full px-3 py-1.5 bg-white/5 border border-white/10 rounded"
+                                placeholder="10"
+                              />
+                            </td>
+                            <td className="py-2">
+                              {slabs.length > 1 && (
+                                <button
+                                  onClick={() => removeSlab(idx)}
+                                  className="p-1 text-red-400 hover:bg-red-500/10 rounded"
+                                >
+                                  <XMarkIcon className="w-4 h-4" />
+                                </button>
+                              )}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
                   </div>
 
-                  {payoutChargeType === 'PERCENTAGE' ? (
-                    <div className="flex items-end gap-4">
-                      <div className="flex-1">
-                        <label className="block text-sm text-white/60 mb-1">Payout Rate (%)</label>
-                        <input
-                          type="number"
-                          step="0.01"
-                          value={payoutRate}
-                          onChange={(e) => setPayoutRate(e.target.value)}
-                          className="w-full px-4 py-2 bg-white/5 border border-white/10 rounded-lg"
-                          placeholder="e.g., 1.5"
-                        />
-                      </div>
-                      <button
-                        onClick={handleSavePayoutSlabs}
-                        disabled={updatePayoutMutation.isPending}
-                        className="px-6 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:opacity-50"
-                      >
-                        {updatePayoutMutation.isPending ? 'Saving...' : 'Save'}
-                      </button>
-                    </div>
-                  ) : (
-                    <div className="space-y-4">
-                      <p className="text-sm text-white/50">
-                        Configure flat fee charges based on transaction amount ranges.
-                      </p>
-
-                      {/* Slabs Table */}
-                      <div className="overflow-x-auto">
-                        <table className="w-full text-sm">
-                          <thead>
-                            <tr className="border-b border-white/10">
-                              <th className="text-left py-2 text-white/50">Min Amount (₹)</th>
-                              <th className="text-left py-2 text-white/50">Max Amount (₹)</th>
-                              <th className="text-left py-2 text-white/50">Flat Fee (₹)</th>
-                              <th className="py-2"></th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {slabs.map((slab, idx) => (
-                              <tr key={idx} className="border-b border-white/5">
-                                <td className="py-2">
-                                  <input
-                                    type="number"
-                                    value={slab.minAmount}
-                                    onChange={(e) => updateSlab(idx, 'minAmount', e.target.value)}
-                                    className="w-full px-3 py-1.5 bg-white/5 border border-white/10 rounded"
-                                    placeholder="0"
-                                  />
-                                </td>
-                                <td className="py-2">
-                                  <input
-                                    type="number"
-                                    value={slab.maxAmount}
-                                    onChange={(e) => updateSlab(idx, 'maxAmount', e.target.value)}
-                                    className="w-full px-3 py-1.5 bg-white/5 border border-white/10 rounded"
-                                    placeholder="Unlimited"
-                                  />
-                                </td>
-                                <td className="py-2">
-                                  <input
-                                    type="number"
-                                    value={slab.flatFee}
-                                    onChange={(e) => updateSlab(idx, 'flatFee', e.target.value)}
-                                    className="w-full px-3 py-1.5 bg-white/5 border border-white/10 rounded"
-                                    placeholder="10"
-                                  />
-                                </td>
-                                <td className="py-2">
-                                  {slabs.length > 1 && (
-                                    <button
-                                      onClick={() => removeSlab(idx)}
-                                      className="p-1 text-red-400 hover:bg-red-500/10 rounded"
-                                    >
-                                      <XMarkIcon className="w-4 h-4" />
-                                    </button>
-                                  )}
-                                </td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
-
-                      <div className="flex items-center justify-between">
-                        <button
-                          onClick={addSlab}
-                          className="text-sm text-blue-400 hover:text-blue-300 flex items-center gap-1"
-                        >
-                          <PlusIcon className="w-4 h-4" />
-                          Add Slab
-                        </button>
-                        <button
-                          onClick={handleSavePayoutSlabs}
-                          disabled={updatePayoutMutation.isPending}
-                          className="px-6 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:opacity-50"
-                        >
-                          {updatePayoutMutation.isPending ? 'Saving...' : 'Save Payout Slabs'}
-                        </button>
-                      </div>
-                    </div>
-                  )}
-                </>
+                  <div className="flex items-center justify-between">
+                    <button
+                      onClick={addSlab}
+                      className="text-sm text-blue-400 hover:text-blue-300 flex items-center gap-1"
+                    >
+                      <PlusIcon className="w-4 h-4" />
+                      Add Slab
+                    </button>
+                    <button
+                      onClick={handleSavePayoutConfig}
+                      disabled={setPayoutMutation.isPending}
+                      className="px-6 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:opacity-50"
+                    >
+                      {setPayoutMutation.isPending ? 'Saving...' : 'Save Payout Config'}
+                    </button>
+                  </div>
+                </div>
               )}
             </div>
           </div>
-        )}
+        ) : view === 'response-codes' ? (
+          // Response Codes Management View
+          <div className="space-y-6">
+            <button 
+              onClick={() => setView('channels')} 
+              className="flex items-center gap-2 text-white/60 hover:text-white"
+            >
+              <ArrowLeftIcon className="w-4 h-4" />
+              Back to channels
+            </button>
+
+            <div className="bg-purple-500/10 border border-purple-500/30 rounded-xl p-4">
+              <h3 className="font-semibold text-lg mb-2 text-purple-400">{selectedPG.name} - Response Code Mappings</h3>
+              <p className="text-sm text-white/60">
+                Configure how payment method strings from {selectedPG.name} API responses are matched to channels.
+                These codes are used to automatically detect the payment method used by customers.
+              </p>
+              <div className="mt-3 p-3 bg-yellow-500/10 border border-yellow-500/30 rounded-lg text-sm">
+                <p className="text-yellow-400 font-medium mb-1">💡 Example:</p>
+                <p className="text-white/60">
+                  If {selectedPG.name} returns <code className="px-1.5 py-0.5 bg-white/10 rounded">payment_method: "credit_card_visa"</code>, 
+                  the system will match it to the Visa channel if "visa" is in its response codes list.
+                </p>
+              </div>
+            </div>
+
+            {channelsLoading ? (
+              <div className="text-center py-8 text-white/40">Loading channels...</div>
+            ) : (
+              <div className="space-y-4">
+                {Object.entries(groupedChannels)
+                  .filter(([_, channels]: any) => channels.some((c: any) => c.transactionType === 'PAYIN'))
+                  .map(([category, categoryChannels]: any) => {
+                    const payinChannels = categoryChannels.filter((c: any) => c.transactionType === 'PAYIN');
+                    if (payinChannels.length === 0) return null;
+
+                    return (
+                      <div key={category} className="bg-white/5 rounded-xl p-4">
+                        <h4 className="font-semibold text-purple-400 mb-3 flex items-center gap-2">
+                          {category}
+                          <span className="text-xs text-white/40 font-normal">({payinChannels.length} channels)</span>
+                        </h4>
+                        <div className="space-y-3">
+                          {payinChannels.map((channel: any) => {
+                            const isEditing = editingResponseCodes?.id === channel.id;
+                            const currentCodes = channel.pgResponseCodes ? JSON.parse(channel.pgResponseCodes) : [];
+
+                            return (
+                              <div
+                                key={channel.id}
+                                className="p-4 bg-white/5 rounded-lg border border-white/10"
+                              >
+                                <div className="flex items-start justify-between mb-2">
+                                  <div className="flex-1">
+                                    <div className="flex items-center gap-2 mb-1">
+                                      <span className="font-medium">{channel.name}</span>
+                                      <span className="text-xs text-white/40 font-mono">{channel.code}</span>
+                                      {channel.isDefault && (
+                                        <span className="text-xs px-2 py-0.5 bg-amber-500/20 text-amber-400 rounded">
+                                          Default Fallback
+                                        </span>
+                                      )}
+                                    </div>
+                                    {!isEditing && (
+                                      <div className="flex flex-wrap gap-1.5 mt-2">
+                                        {currentCodes.length > 0 ? (
+                                          currentCodes.map((code: string, idx: number) => (
+                                            <span
+                                              key={idx}
+                                              className="px-2 py-1 bg-purple-500/20 text-purple-300 rounded text-xs font-mono"
+                                            >
+                                              {code}
+                                            </span>
+                                          ))
+                                        ) : (
+                                          <span className="text-xs text-white/40 italic">No response codes configured</span>
+                                        )}
+                                      </div>
+                                    )}
+                                  </div>
+                                  {!isEditing && (
+                                    <button
+                                      onClick={() => {
+                                        setEditingResponseCodes(channel);
+                                        setResponseCodesInput(currentCodes.join(', '));
+                                      }}
+                                      className="p-2 hover:bg-white/10 rounded transition-all"
+                                    >
+                                      <PencilIcon className="w-4 h-4 text-white/60" />
+                                    </button>
+                                  )}
+                                </div>
+
+                                {isEditing && (
+                                  <div className="mt-3 space-y-3">
+                                    <div>
+                                      <label className="block text-sm text-white/60 mb-2">
+                                        Response Codes (comma-separated):
+                                      </label>
+                                      <input
+                                        type="text"
+                                        value={responseCodesInput}
+                                        onChange={(e) => setResponseCodesInput(e.target.value)}
+                                        className="w-full px-3 py-2 bg-white/10 border border-white/20 rounded text-sm font-mono"
+                                        placeholder="visa, VISA, credit_card_visa"
+                                        autoFocus
+                                      />
+                                      <p className="text-xs text-white/40 mt-1">
+                                        Enter all possible values that {selectedPG.name} might return for this payment method.
+                                        Matching is case-insensitive and uses substring matching.
+                                      </p>
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                      <button
+                                        onClick={() => {
+                                          const codes = responseCodesInput
+                                            .split(',')
+                                            .map(c => c.trim())
+                                            .filter(c => c.length > 0);
+                                          updateResponseCodesMutation.mutate({
+                                            channelId: channel.id,
+                                            responseCodes: codes
+                                          });
+                                        }}
+                                        disabled={updateResponseCodesMutation.isPending}
+                                        className="px-4 py-2 bg-purple-500 text-white rounded text-sm hover:bg-purple-600 disabled:opacity-50"
+                                      >
+                                        {updateResponseCodesMutation.isPending ? 'Saving...' : 'Save'}
+                                      </button>
+                                      <button
+                                        onClick={() => {
+                                          setEditingResponseCodes(null);
+                                          setResponseCodesInput('');
+                                        }}
+                                        className="px-4 py-2 bg-white/10 text-white/60 rounded text-sm hover:bg-white/20"
+                                      >
+                                        Cancel
+                                      </button>
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    );
+                  })}
+              </div>
+            )}
+
+            <div className="mt-6 p-4 bg-blue-500/10 border border-blue-500/30 rounded-lg">
+              <h4 className="font-medium text-blue-400 mb-2">📝 Best Practices:</h4>
+              <ul className="text-sm text-white/60 space-y-1 list-disc list-inside">
+                <li>Include multiple variations (lowercase, uppercase, with underscores)</li>
+                <li>Example: For Visa, add: visa, VISA, Visa, credit_card_visa, visa_normal</li>
+                <li>The system uses substring matching, so "visa" will match "credit_card_visa"</li>
+                <li>Set one channel as "Default Fallback" for unmatched payment methods</li>
+                <li>Test with actual {selectedPG.name} responses to ensure correct matching</li>
+              </ul>
+            </div>
+          </div>
+        ) : null}
 
         <div className="flex justify-end pt-4 mt-6 border-t border-white/5">
           <button onClick={onClose} className="btn-secondary">
@@ -3669,6 +4056,5 @@ function SchemaRatesModal({ schema, allPGs, onClose }: { schema: any; allPGs: an
     </div>
   );
 }
-
 
 export default AdminDashboard;

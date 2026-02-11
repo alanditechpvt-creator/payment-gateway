@@ -116,25 +116,32 @@ export const config = {
   },
 
   // Payment Gateway: BBPS (Live API)
-  bbps: {
-    enabled: process.env.BBPS_ENABLED === 'true',
-    accessCode: process.env.BBPS_ACCESS_CODE || '',
-    workingKey: process.env.BBPS_WORKING_KEY || '',
-    agentId: process.env.BBPS_AGENT_ID || '',
-    instituteId: process.env.BBPS_AGENT_INSTITUTION_ID || '',
-    instituteName: process.env.BBPS_AGENT_INSTITUTION_NAME || '',
-    paymentChannel: process.env.BBPS_PAYMENT_CHANNEL || 'AGT',
-    endpoints: {
-      billerMdm: 'https://api.billavenue.com/billpay/extMdmCntrl/mdmRequestNew/xml',
-      billFetch: 'https://api.billavenue.com/billpay/extBillCntrl/billFetchRequest/xml',
-      billPayment: 'https://api.billavenue.com/billpay/extBillPayCntrl/billPayRequest/xml',
-      complaintRegistration: 'https://api.billavenue.com/billpay/extComplaints/register/xml',
-      complaintTracking: 'https://api.billavenue.com/billpay/extComplaints/track/xml',
-      transactionStatus: 'https://api.billavenue.com/billpay/transactionStatus/fetchInfo/xml',
-      depositEnquiry: 'https://api.billavenue.com/billpay/enquireDeposit/fetchDetails/xml',
-      billValidation: 'https://api.billavenue.com/billpay/extBillValCntrl/billValidationRequest/xml',
-    },
-  },
+  bbps: (() => {
+    const isProduction = process.env.BBPS_ENDPOINT === 'production';
+    const baseUrl = isProduction 
+      ? 'https://api.billavenue.com/billpay' 
+      : 'https://uat.billavenue.com/billpay';
+    
+    return {
+      enabled: process.env.BBPS_ENABLED === 'true',
+      accessCode: process.env.BBPS_ACCESS_CODE || '',
+      workingKey: process.env.BBPS_WORKING_KEY || '',
+      agentId: process.env.BBPS_AGENT_ID || '',
+      instituteId: process.env.BBPS_AGENT_INSTITUTION_ID || '',
+      instituteName: process.env.BBPS_AGENT_INSTITUTION_NAME || '',
+      paymentChannel: process.env.BBPS_PAYMENT_CHANNEL || 'AGT',
+      endpoints: {
+        billerMdm: `${baseUrl}/extMdmCntrl/mdmRequestNew/xml`,
+        billFetch: `${baseUrl}/extBillCntrl/billFetchRequest/xml`,
+        billPayment: `${baseUrl}/extBillPayCntrl/billPayRequest/xml`,
+        complaintRegistration: `${baseUrl}/extComplaints/register/xml`,
+        complaintTracking: `${baseUrl}/extComplaints/track/xml`,
+        transactionStatus: `${baseUrl}/transactionStatus/fetchInfo/xml`,
+        depositEnquiry: `${baseUrl}/enquireDeposit/fetchDetails/xml`,
+        billValidation: `${baseUrl}/extBillValCntrl/billValidationRequest/xml`,
+      },
+    };
+  })(),
   
   // CAPTCHA: Cloudflare Turnstile (free, privacy-friendly)
   // Get keys from: https://dash.cloudflare.com/turnstile
