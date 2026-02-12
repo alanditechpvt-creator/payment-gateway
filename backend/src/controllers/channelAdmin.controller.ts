@@ -448,8 +448,9 @@ export const channelAdminController = {
         throw new AppError('Invalid payin channel', 400);
       }
       
-      // Validate rate is >= channel base cost
-      if (payinRate < channel.baseCost) {
+      // Validate rate is >= channel base cost (with small epsilon for floating point comparison)
+      const epsilon = 0.0001; // 0.01% tolerance
+      if (payinRate < (channel.baseCost - epsilon)) {
         throw new AppError(
           `Rate (${(payinRate * 100).toFixed(2)}%) cannot be lower than channel base cost (${(channel.baseCost * 100).toFixed(2)}%)`,
           400
