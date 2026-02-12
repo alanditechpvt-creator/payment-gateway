@@ -30,17 +30,19 @@ export const rateService = {
    * Returns the rate they are CHARGED (their cost)
    */
   async getUserRate(userId: string, pgId: string, type: 'PAYIN' | 'PAYOUT' = 'PAYIN'): Promise<number> {
-    const userRate = await prisma.userPGRate.findUnique({
+    // Check if PG is assigned to user
+    const pgAssignment = await prisma.userPGAssignment.findUnique({
       where: {
         userId_pgId: { userId, pgId },
       },
     });
     
-    if (userRate) {
-      return type === 'PAYIN' ? userRate.payinRate : userRate.payoutRate;
+    if (!pgAssignment || !pgAssignment.isEnabled) {
+      throw new AppError('Payment gateway not assigned to user', 404);
     }
     
-    // If no rate assigned, fall back to PG base rate
+    // For now, return a default rate
+    // TODO: Calculate from channel-based rates
     const pg = await prisma.paymentGateway.findUnique({
       where: { id: pgId },
     });
@@ -52,17 +54,27 @@ export const rateService = {
    * Get all rates assigned to a user (for all PGs)
    */
   async getUserRates(userId: string) {
-    const rates = await prisma.userPGRate.findMany({
-      where: { userId },
+    const pgAssignments = await prisma.userPGAssignment.findMany({
+      where: { userId, isEnabled: true },
       include: {
         paymentGateway: {
           select: { id: true, name: true, code: true, baseRate: true, isActive: true, supportedTypes: true },
         },
-        assignedBy: {
-          select: { id: true, email: true, firstName: true, lastName: true, role: true },
-        },
       },
     });
+    
+    // Map to old format for compatibility
+    const rates = pgAssignments.map(assignment => ({
+      id: assignment.id,
+      userId: assignment.userId,
+      pgId: assignment.pgId,
+      payinRate: assignment.paymentGateway.baseRate,
+      payoutRate: assignment.paymentGateway.baseRate,
+      isEnabled: assignment.isEnabled,
+      createdAt: assignment.createdAt,
+      updatedAt: assignment.updatedAt,
+      paymentGateway: assignment.paymentGateway,
+    }));
     
     return rates;
   },
@@ -92,17 +104,20 @@ export const rateService = {
       };
     }
     
-    // Others see their assigned rate
-    const userRate = await prisma.userPGRate.findUnique({
+    // Others see their assigned rate (check PG assignment)
+    const pgAssignment = await prisma.userPGAssignment.findUnique({
       where: {
         userId_pgId: { userId, pgId },
       },
+      include: {
+        paymentGateway: true,
+      },
     });
     
-    if (userRate) {
+    if (pgAssignment && pgAssignment.isEnabled) {
       return {
-        payinRate: userRate.payinRate,
-        payoutRate: userRate.payoutRate,
+        payinRate: pgAssignment.paymentGateway.baseRate,
+        payoutRate: pgAssignment.paymentGateway.baseRate,
       };
     }
     
@@ -196,8 +211,42 @@ export const rateService = {
       throw new AppError('Payment gateway not available', 400);
     }
     
-    // Create or update the rate assignment
-    const rate = await prisma.userPGRate.upsert({
+    // Create or update PG assignment
+    const pgAssignment = await prisma.userPGAssignment.upsert({
+      where: {
+        userId_pgId: { userId: targetUserId, pgId },
+      },
+      update: {
+        isEnabled: true,
+      },
+      create: {
+        userId: targetUserId,
+        pgId,
+        isEnabled: true,
+      },
+    });
+
+    // For now, return a compatible response structure
+    // TODO: Migrate to channel-based rate assignment
+    const rate = {
+      id: pgAssignment.id,
+      userId: targetUserId,
+      pgId,
+      payinRate,
+      payoutRate: finalPayoutRate,
+      assignedById: assignerId,
+      isEnabled: true,
+      createdAt: pgAssignment.createdAt,
+      updatedAt: pgAssignment.updatedAt,
+      paymentGateway: pg,
+      assignedBy: assigner,
+      user: targetUser,
+    };
+    
+    return rate;
+    
+    /* OLD CODE - Kept for reference
+    const oldRate = await prisma.userPGRate.upsert({
       where: {
         userId_pgId: { userId: targetUserId, pgId },
       },
@@ -240,6 +289,14 @@ export const rateService = {
       },
     });
     
+    return oldRate;
+    */
+        userId: targetUserId,
+        pgId,
+        isEnabled: true,
+      },
+    });
+    
     return rate;
   },
   
@@ -272,17 +329,30 @@ export const rateService = {
     // Get rates for each child
     const childrenWithRates = await Promise.all(
       children.map(async (child) => {
-        const where: any = { userId: child.id };
+        const where: any = { userId: child.id, isEnabled: true };
         if (pgId) where.pgId = pgId;
         
-        const rates = await prisma.userPGRate.findMany({
+        const pgAssignments = await prisma.userPGAssignment.findMany({
           where,
           include: {
             paymentGateway: {
-              select: { id: true, name: true, code: true, isActive: true, supportedTypes: true },
+              select: { id: true, name: true, code: true, isActive: true, supportedTypes: true, baseRate: true },
             },
           },
         });
+        
+        // Map to old rate format for compatibility
+        const rates = pgAssignments.map(assignment => ({
+          id: assignment.id,
+          userId: assignment.userId,
+          pgId: assignment.pgId,
+          payinRate: assignment.paymentGateway.baseRate,
+          payoutRate: assignment.paymentGateway.baseRate,
+          isEnabled: assignment.isEnabled,
+          createdAt: assignment.createdAt,
+          updatedAt: assignment.updatedAt,
+          paymentGateway: assignment.paymentGateway,
+        }));
         
         return {
           ...child,
@@ -360,14 +430,21 @@ export const rateService = {
       throw new AppError('You can only manage rates for your direct children', 403);
     }
     
-    const rate = await prisma.userPGRate.update({
+    const pgAssignment = await prisma.userPGAssignment.update({
       where: {
         userId_pgId: { userId: targetUserId, pgId },
       },
       data: { isEnabled },
     });
     
-    return rate;
+    return {
+      id: pgAssignment.id,
+      userId: pgAssignment.userId,
+      pgId: pgAssignment.pgId,
+      isEnabled: pgAssignment.isEnabled,
+      createdAt: pgAssignment.createdAt,
+      updatedAt: pgAssignment.updatedAt,
+    };
   },
   
   /**
