@@ -4,7 +4,7 @@ import userRoutes from './user.routes';
 import walletRoutes from './wallet.routes';
 import transactionRoutes from './transaction.routes';
 import pgRoutes from './pg.routes';
-// import schemaRoutes from './schema.routes'; // DEPRECATED - moved to deprecated folder
+import schemaRoutes from './schema.routes';
 import beneficiaryRoutes from './beneficiary.routes';
 import webhookRoutes from './webhook.routes';
 import rateRoutes from './rate.routes';
@@ -40,7 +40,7 @@ router.use('/razorpay', razorpayRoutes);
 router.use('/sabpaisa', sabpaisaRoutes);
 router.use('/cashfree', cashfreeRoutes);
 router.use('/bbps', bbpsRoutes);
-// router.use('/schemas', schemaRoutes); // DEPRECATED - use channel-based system
+router.use('/schemas', schemaRoutes);
 router.use('/beneficiaries', beneficiaryRoutes);
 router.use('/webhooks', webhookRoutes);
 router.use('/rates', rateRoutes);
