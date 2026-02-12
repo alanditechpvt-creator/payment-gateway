@@ -171,4 +171,79 @@ export const rateController = {
       next(error);
     }
   },
+
+  /**
+   * Get user's channel rates for a PG (MD/Admin can view child rates)
+   */
+  async getUserChannelRates(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { userId, pgId } = req.params;
+      
+      const rates = await rateService.getUserChannelRates(
+        req.user!.userId,
+        userId,
+        pgId
+      );
+      
+      res.json({ success: true, data: rates });
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  /**
+   * Update single channel rate for a user
+   */
+  async updateChannelRate(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { userId, channelId } = req.params;
+      const { payinRate } = req.body;
+      
+      if (payinRate === undefined || payinRate === null) {
+        return res.status(400).json({ 
+          success: false, 
+          error: 'payinRate is required' 
+        });
+      }
+      
+      const rate = await rateService.updateChannelRate(
+        req.user!.userId,
+        userId,
+        channelId,
+        parseFloat(payinRate)
+      );
+      
+      res.json({ success: true, data: rate });
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  /**
+   * Bulk update channel rates for a user
+   */
+  async bulkUpdateChannelRates(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { userId } = req.params;
+      const { pgId, rates } = req.body;
+      
+      if (!pgId || !rates || !Array.isArray(rates)) {
+        return res.status(400).json({ 
+          success: false, 
+          error: 'pgId and rates array are required' 
+        });
+      }
+      
+      const updatedRates = await rateService.bulkUpdateChannelRates(
+        req.user!.userId,
+        userId,
+        pgId,
+        rates
+      );
+      
+      res.json({ success: true, data: updatedRates });
+    } catch (error) {
+      next(error);
+    }
+  },
 };

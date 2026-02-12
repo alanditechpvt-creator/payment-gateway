@@ -266,5 +266,33 @@ export const pgService = {
     };
   },
   */
+
+  // Update PG base rate (Admin only)
+  async updateBaseRate(pgId: string, baseRate: number) {
+    if (baseRate < 0 || baseRate > 0.1) {
+      throw new AppError('Base rate must be between 0% and 10%', 400);
+    }
+
+    const pg = await prisma.paymentGateway.update({
+      where: { id: pgId },
+      data: { baseRate },
+    });
+
+    return pg;
+  },
+
+  // Get all channels for a PG
+  async getChannelsForPG(pgId: string) {
+    const channels = await prisma.transactionChannel.findMany({
+      where: { pgId },
+      orderBy: [
+        { category: 'asc' },
+        { cardNetwork: 'asc' },
+        { cardType: 'asc' },
+      ],
+    });
+
+    return channels;
+  },
 };
 

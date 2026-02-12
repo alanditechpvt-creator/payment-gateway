@@ -70,5 +70,11 @@ router.delete('/:pgId', authorize('ADMIN'), pgController.deletePG);
 router.post('/:pgId/toggle', authorize('ADMIN'), pgController.toggleStatus);
 router.get('/:pgId/stats', authorize('ADMIN'), pgController.getStats);
 
+// Update PG base rate (Admin only)
+router.put('/:pgId/base-rate', authorize('ADMIN'), pgController.updateBaseRate);
+
+// Get channels for a PG
+router.get('/:pgId/channels', pgController.getChannels);
+
 export default router;
 

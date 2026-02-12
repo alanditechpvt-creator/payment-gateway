@@ -34,4 +34,13 @@ router.patch('/toggle/:targetUserId/:pgId', rateController.togglePGForUser);
 // Get rate for a specific user (Admin or parent access)
 router.get('/user/:userId/pg/:pgId', rateController.getUserRate);
 
+// Get user's channel rates for a PG
+router.get('/user/:userId/channels/:pgId', rateController.getUserChannelRates);
+
+// Update single channel rate
+router.put('/user/:userId/channel/:channelId', rateController.updateChannelRate);
+
+// Bulk update channel rates
+router.put('/user/:userId/channels', rateController.bulkUpdateChannelRates);
+
 export default router;

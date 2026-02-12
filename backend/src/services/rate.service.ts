@@ -633,4 +633,186 @@ export const rateService = {
     
     return { results, errors };
   },
+
+  /**
+   * Get user's channel rates for a PG (with schema rates as reference)
+   */
+  async getUserChannelRates(requesterId: string, targetUserId: string, pgId: string) {
+    // Verify requester has access (admin or parent)
+    await this.verifyRateAccessPermission(requesterId, targetUserId);
+
+    const user = await prisma.user.findUnique({
+      where: { id: targetUserId },
+      include: { schema: true },
+    });
+
+    if (!user) {
+      throw new AppError('User not found', 404);
+    }
+
+    // Get all channels for this PG
+    const channels = await prisma.transactionChannel.findMany({
+      where: { pgId, transactionType: 'PAYIN' },
+      orderBy: [
+        { category: 'asc' },
+        { cardNetwork: 'asc' },
+        { cardType: 'asc' },
+      ],
+    });
+
+    // Get user's custom rates
+    const userRates = await prisma.userPayinRate.findMany({
+      where: {
+        userId: targetUserId,
+        channelId: { in: channels.map(c => c.id) },
+      },
+    });
+
+    const userRateMap = new Map(userRates.map(r => [r.channelId, r]));
+
+    // Get schema rates for reference
+    const schemaRates = await prisma.schemaPayinRate.findMany({
+      where: {
+        schemaId: user.schemaId!,
+        channelId: { in: channels.map(c => c.id) },
+      },
+    });
+
+    const schemaRateMap = new Map(schemaRates.map(r => [r.channelId, r]));
+
+    // Get PG base rate
+    const pg = await prisma.paymentGateway.findUnique({
+      where: { id: pgId },
+      select: { baseRate: true },
+    });
+
+    // Build response
+    return channels.map(channel => {
+      const userRate = userRateMap.get(channel.id);
+      const schemaRate = schemaRateMap.get(channel.id);
+      
+      return {
+        channelId: channel.id,
+        channelName: channel.name,
+        channelCode: channel.code,
+        category: channel.category,
+        cardNetwork: channel.cardNetwork,
+        cardType: channel.cardType,
+        currentRate: userRate ? Number(userRate.payinRate) : (schemaRate ? Number(schemaRate.payinRate) : Number(pg?.baseRate || 0)),
+        schemaRate: schemaRate ? Number(schemaRate.payinRate) : Number(pg?.baseRate || 0),
+        minRate: schemaRate ? Number(schemaRate.payinRate) : Number(pg?.baseRate || 0),
+        isCustomRate: !!userRate,
+        assignedById: userRate?.assignedById,
+      };
+    });
+  },
+
+  /**
+   * Update single channel rate for a user
+   */
+  async updateChannelRate(
+    requesterId: string,
+    targetUserId: string,
+    channelId: string,
+    payinRate: number
+  ) {
+    // Verify requester has access
+    await this.verifyRateAccessPermission(requesterId, targetUserId);
+
+    // Get channel to find PG and schema rate
+    const channel = await prisma.transactionChannel.findUnique({
+      where: { id: channelId },
+      include: { paymentGateway: true },
+    });
+
+    if (!channel) {
+      throw new AppError('Channel not found', 404);
+    }
+
+    // Get user and schema rate
+    const user = await prisma.user.findUnique({
+      where: { id: targetUserId },
+      select: { schemaId: true },
+    });
+
+    const schemaRate = await prisma.schemaPayinRate.findUnique({
+      where: {
+        schemaId_channelId: {
+          schemaId: user?.schemaId!,
+          channelId,
+        },
+      },
+    });
+
+    const minRate = schemaRate ? Number(schemaRate.payinRate) : Number(channel.paymentGateway.baseRate);
+
+    // Validate rate is not below minimum
+    if (payinRate < minRate) {
+      throw new AppError(
+        `Rate cannot be below ${(minRate * 100).toFixed(2)}% (schema/base rate)`,
+        400
+      );
+    }
+
+    // Validate requester's rate
+    const requesterRate = await this.getUserRate(requesterId, channel.pgId, 'PAYIN', channelId);
+    if (payinRate < requesterRate) {
+      throw new AppError(
+        `Rate cannot be below your own rate of ${(requesterRate * 100).toFixed(2)}%`,
+        400
+      );
+    }
+
+    // Create or update UserPayinRate
+    const userRate = await prisma.userPayinRate.upsert({
+      where: {
+        userId_channelId: { userId: targetUserId, channelId },
+      },
+      create: {
+        userId: targetUserId,
+        channelId,
+        payinRate,
+        assignedById: requesterId,
+      },
+      update: {
+        payinRate,
+        assignedById: requesterId,
+        updatedAt: new Date(),
+      },
+    });
+
+    return userRate;
+  },
+
+  /**
+   * Bulk update channel rates for a user
+   */
+  async bulkUpdateChannelRates(
+    requesterId: string,
+    targetUserId: string,
+    pgId: string,
+    rates: Array<{ channelId: string; payinRate: number }>
+  ) {
+    const results = [];
+    const errors = [];
+
+    for (const rateUpdate of rates) {
+      try {
+        const result = await this.updateChannelRate(
+          requesterId,
+          targetUserId,
+          rateUpdate.channelId,
+          rateUpdate.payinRate
+        );
+        results.push(result);
+      } catch (error: any) {
+        errors.push({
+          channelId: rateUpdate.channelId,
+          error: error.message,
+        });
+      }
+    }
+
+    return { results, errors };
+  },
 };

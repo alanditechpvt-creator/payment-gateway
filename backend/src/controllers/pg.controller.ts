@@ -100,5 +100,36 @@ export const pgController = {
       next(error);
     }
   },
+
+  // Admin: Update PG base rate
+  async updateBaseRate(req: AuthRequest, res: Response, next: NextFunction) {
+    try {
+      const { pgId } = req.params;
+      const { baseRate } = req.body;
+      
+      if (baseRate === undefined || baseRate === null) {
+        return res.status(400).json({ 
+          success: false, 
+          error: 'baseRate is required' 
+        });
+      }
+      
+      const pg = await pgService.updateBaseRate(pgId, parseFloat(baseRate));
+      res.json({ success: true, data: pg });
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  // Get all channels for a PG
+  async getChannels(req: AuthRequest, res: Response, next: NextFunction) {
+    try {
+      const { pgId } = req.params;
+      const channels = await pgService.getChannelsForPG(pgId);
+      res.json({ success: true, data: channels });
+    } catch (error) {
+      next(error);
+    }
+  },
 };
 
