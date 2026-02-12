@@ -36,6 +36,8 @@ import {
 } from '@heroicons/react/24/outline';
 import { CheckIcon } from '@heroicons/react/24/solid';
 import { walletApi, ledgerApi, cardTypeApi } from '@/lib/api';
+import ChannelRateManager from './ChannelRateManager';
+import PGBaseRateManager from './PGBaseRateManager';
 
 type Tab = 'overview' | 'users' | 'transactions' | 'gateways' | 'cardtypes' | 'schemas' | 'wallet' | 'ledger' | 'announcements' | 'settings';
 
@@ -340,6 +342,7 @@ function UsersTab({ users, schemas, onRefresh }: { users: any[]; schemas: any[];
   const queryClient = useQueryClient();
   const [showModal, setShowModal] = useState(false);
   const [showRatesModal, setShowRatesModal] = useState(false);
+  const [showChannelRatesModal, setShowChannelRatesModal] = useState(false);
   const [selectedUser, setSelectedUser] = useState<any>(null);
   const [formData, setFormData] = useState({
     email: '',
@@ -838,16 +841,28 @@ function UsersTab({ users, schemas, onRefresh }: { users: any[]; schemas: any[];
                             Payout: {(rate.payoutRate * 100).toFixed(2)}%
                           </p>
                         </div>
-                        <button
-                          onClick={() => {
-                            setSelectedPG(rate.paymentGateway.id);
-                            setPayinRate((rate.payinRate * 100).toString());
-                            setPayoutRate((rate.payoutRate * 100).toString());
-                          }}
-                          className="ml-4 px-3 py-1.5 bg-amber-500/10 text-amber-400 rounded-lg text-sm hover:bg-amber-500/20"
-                        >
-                          Edit
-                        </button>
+                        <div className="flex gap-2 ml-4">
+                          <button
+                            onClick={() => {
+                              setSelectedPG(rate.paymentGateway.id);
+                              setShowChannelRatesModal(true);
+                            }}
+                            className="px-3 py-1.5 bg-blue-500/10 text-blue-400 rounded-lg text-sm hover:bg-blue-500/20 flex items-center gap-1"
+                          >
+                            <CreditCardIcon className="w-4 h-4" />
+                            Channels
+                          </button>
+                          <button
+                            onClick={() => {
+                              setSelectedPG(rate.paymentGateway.id);
+                              setPayinRate((rate.payinRate * 100).toString());
+                              setPayoutRate((rate.payoutRate * 100).toString());
+                            }}
+                            className="px-3 py-1.5 bg-amber-500/10 text-amber-400 rounded-lg text-sm hover:bg-amber-500/20"
+                          >
+                            Edit
+                          </button>
+                        </div>
                       </div>
                     ))}
                   </div>
@@ -2921,6 +2936,11 @@ function SettingsTab() {
   return (
     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-6">
       <h1 className="text-2xl font-bold">Settings</h1>
+
+      {/* PG Base Rate Manager - Admin Only */}
+      <div className="mb-6">
+        <PGBaseRateManager />
+      </div>
       
       <div className="grid grid-cols-2 gap-6">
         {/* Profile Info */}
@@ -4056,5 +4076,18 @@ function SchemaRatesModal({ schema, allPGs, onClose }: { schema: any; allPGs: an
     </div>
   );
 }
+
+      {/* Channel Rate Manager Modal */}
+      {showChannelRatesModal && selectedUser && selectedPG && (
+        <ChannelRateManager
+          userId={selectedUser.id}
+          pgId={selectedPG}
+          pgName={userRates.find((r: any) => r.paymentGateway.id === selectedPG)?.paymentGateway.name || ''}
+          onClose={() => {
+            setShowChannelRatesModal(false);
+            refetchUserRates();
+          }}
+        />
+      )}
 
 export default AdminDashboard;
