@@ -24,21 +24,78 @@ async function seedPaymentGateways() {
   });
   console.log(`✓ Razorpay (${razorpay.id})`);
 
+  // PayU
+  const payu = await prisma.paymentGateway.upsert({
+    where: { code: 'PAYU' },
+    update: {
+      name: 'PayU',
+      description: 'PayU Payment Gateway',
+      isActive: true,
+      supportedTypes: 'PAYIN',
+    },
+    create: {
+      name: 'PayU',
+      code: 'PAYU',
+      description: 'PayU Payment Gateway',
+      isActive: true,
+      supportedTypes: 'PAYIN',
+    },
+  });
+  console.log(`✓ PayU (${payu.id})`);
+
+  // Cashfree
+  const cashfree = await prisma.paymentGateway.upsert({
+    where: { code: 'CASHFREE' },
+    update: {
+      name: 'Cashfree',
+      description: 'Cashfree Payment Gateway',
+      isActive: true,
+      supportedTypes: 'PAYIN,PAYOUT',
+    },
+    create: {
+      name: 'Cashfree',
+      code: 'CASHFREE',
+      description: 'Cashfree Payment Gateway',
+      isActive: true,
+      supportedTypes: 'PAYIN,PAYOUT',
+    },
+  });
+  console.log(`✓ Cashfree (${cashfree.id})`);
+
+  // Paytm
+  const paytm = await prisma.paymentGateway.upsert({
+    where: { code: 'PAYTM' },
+    update: {
+      name: 'Paytm',
+      description: 'Paytm Payment Gateway',
+      isActive: true,
+      supportedTypes: 'PAYIN',
+    },
+    create: {
+      name: 'Paytm',
+      code: 'PAYTM',
+      description: 'Paytm Payment Gateway',
+      isActive: true,
+      supportedTypes: 'PAYIN',
+    },
+  });
+  console.log(`✓ Paytm (${paytm.id})`);
+
   // Sabpaisa
   const sabpaisa = await prisma.paymentGateway.upsert({
     where: { code: 'SABPAISA' },
     update: {
       name: 'Sabpaisa',
-      description: 'Sabpaisa Payment Gateway',
+      description: 'Sabpaisa Payment Gateway - BBPS',
       isActive: true,
-      supportedTypes: 'PAYIN,PAYOUT',
+      supportedTypes: 'PAYIN',
     },
     create: {
       name: 'Sabpaisa',
       code: 'SABPAISA',
-      description: 'Sabpaisa Payment Gateway',
+      description: 'Sabpaisa Payment Gateway - BBPS',
       isActive: true,
-      supportedTypes: 'PAYIN,PAYOUT',
+      supportedTypes: 'PAYIN',
     },
   });
   console.log(`✓ Sabpaisa (${sabpaisa.id})`);
