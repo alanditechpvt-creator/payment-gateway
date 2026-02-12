@@ -291,13 +291,6 @@ export const rateService = {
     
     return oldRate;
     */
-        userId: targetUserId,
-        pgId,
-        isEnabled: true,
-      },
-    });
-    
-    return rate;
   },
   
   /**
