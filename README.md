@@ -44,6 +44,36 @@ A comprehensive payment gateway management system with multi-level user hierarch
 - PostgreSQL 14+
 - npm or yarn
 
+## 📦 Deployment
+
+### ⚠️ IMPORTANT: Always Use Safe Deployment
+
+**Never deploy manually!** Always use the automated deployment script:
+
+```powershell
+# Full validation + deployment
+.\safe-deploy.ps1
+
+# Quick deployment (faster, still validates)
+.\safe-deploy.ps1 -Quick
+```
+
+**What safe-deploy does:**
+1. ✅ Validates TypeScript compilation (catches errors before production)
+2. ✅ Commits and pushes to git
+3. ✅ Saves commit hash for easy rollback
+4. ✅ Deploys to production (72.61.254.18)
+5. ✅ Verifies all services are online
+6. ✅ Tests API health endpoint
+7. ✅ Provides rollback command if anything fails
+
+**Pre-deployment validation only:**
+```powershell
+.\validate-before-deploy.ps1
+```
+
+See [DEPLOYMENT_BEST_PRACTICES.md](DEPLOYMENT_BEST_PRACTICES.md) for complete guide.
+
 ### Backend Setup
 
 ```bash
