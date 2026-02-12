@@ -91,11 +91,14 @@ export interface CreateSchemaDTO {
   isDefault?: boolean;
 }
 
+// DEPRECATED: Use channel-based SchemaPayinRate and SchemaPayoutConfig models
+/*
 export interface SchemaPGRateDTO {
   pgId: string;
   payinRate: number;
   payoutRate: number;
 }
+*/
 
 export interface CreatePGDTO {
   name: string;

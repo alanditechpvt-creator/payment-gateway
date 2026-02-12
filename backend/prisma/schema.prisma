@@ -170,6 +170,9 @@ model PaymentGateway {
   code            String              @unique
   description     String?
   
+  // Base rate set by admin (considering VISA/Master/RuPay normal cards)
+  baseRate        Float               @default(0.02)
+  
   // Configuration (encrypted in production)
   apiKey          String?
   apiSecret       String?

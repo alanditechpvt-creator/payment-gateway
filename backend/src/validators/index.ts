@@ -205,6 +205,8 @@ export const createSchemaSchema = z.object({
 
 export const updateSchemaSchema = createSchemaSchema.partial();
 
+// DEPRECATED: Old schemaPGRate model removed - use channel-based SchemaPayinRate/SchemaPayoutConfig
+/*
 export const schemaPGRateSchema = z.object({
   pgId: z.string().uuid(),
   payinRate: z.coerce.number().min(0).max(1, 'Rate must be between 0 and 1 (0-100%)'),
@@ -216,6 +218,7 @@ export const schemaPGRateSchema = z.object({
     flatCharge: z.coerce.number().min(0),
   })).optional(),
 });
+*/
 
 // ==================== PAYMENT GATEWAY SCHEMAS ====================
 
@@ -240,8 +243,9 @@ export const createPGSchema = z.object({
 
 export const updatePGSchema = createPGSchema.partial();
 
-// ==================== CARD TYPE SCHEMAS ====================
-
+// ==================== CARD TYPE SCHEMAS (DEPRECATED) ====================
+// CardType model removed - use TransactionChannel model for channel-based rates
+/*
 export const createCardTypeSchema = z.object({
   pgId: z.string().uuid(),
   code: z.string()
@@ -257,6 +261,7 @@ export const createCardTypeSchema = z.object({
 });
 
 export const updateCardTypeSchema = createCardTypeSchema.partial().omit({ pgId: true, code: true });
+*/
 
 // ==================== RATE ASSIGNMENT SCHEMAS ====================
 
@@ -267,9 +272,12 @@ export const assignRateSchema = z.object({
   payoutRate: z.coerce.number().min(0).max(1).optional(),
 });
 
+// DEPRECATED: CardType model removed
+/*
 export const assignCardTypeRateSchema = z.object({
   payinRate: z.coerce.number().min(0).max(1),
 });
+*/
 
 // ==================== EXPORT ALL SCHEMAS ====================
 
@@ -302,19 +310,19 @@ export const schemas = {
   // Schema
   createSchema: createSchemaSchema,
   updateSchema: updateSchemaSchema,
-  schemaPGRate: schemaPGRateSchema,
+  // schemaPGRate: schemaPGRateSchema, // DEPRECATED
   
   // Payment Gateway
   createPG: createPGSchema,
   updatePG: updatePGSchema,
   
-  // Card Type
-  createCardType: createCardTypeSchema,
-  updateCardType: updateCardTypeSchema,
+  // Card Type - DEPRECATED
+  // createCardType: createCardTypeSchema,
+  // updateCardType: updateCardTypeSchema,
   
   // Rate
   assignRate: assignRateSchema,
-  assignCardTypeRate: assignCardTypeRateSchema,
+  // assignCardTypeRate: assignCardTypeRateSchema, // DEPRECATED
   
   // Common
   pagination: paginationSchema,

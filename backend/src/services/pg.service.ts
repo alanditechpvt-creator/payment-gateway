@@ -172,7 +172,8 @@ export const pgService = {
     
     // Delete assignments first
     await prisma.userPGAssignment.deleteMany({ where: { pgId } });
-    await prisma.schemaPGRate.deleteMany({ where: { pgId } });
+    // Note: SchemaPayinRate and SchemaPayoutConfig should also be cleaned up
+    // but they use the new channel-based system
     
     await prisma.paymentGateway.delete({ where: { id: pgId } });
     
@@ -219,7 +220,9 @@ export const pgService = {
     };
   },
   
-  // Get payout slabs for a user based on their schema
+  // DEPRECATED: Old method using schemaPGRate model (removed)
+  // Use transaction.service.ts getPayoutSlabs() or new channel-based system
+  /*
   async getPayoutSlabsForUser(userId: string, pgId: string) {
     const user = await prisma.user.findUnique({
       where: { id: userId },
@@ -262,5 +265,6 @@ export const pgService = {
       ],
     };
   },
+  */
 };
 

@@ -11,7 +11,6 @@ import { userService } from './user.service';
 import { runpaisaService } from './runpaisa.service';
 import { cashfreeService } from './cashfree.service';
 import { rateService } from './rate.service';
-import { cardTypeService } from './cardType.service';
 import { razorpayService } from './razorpay.service';
 import { logger } from '../utils/logger';
 import { config } from '../config';
@@ -358,22 +357,23 @@ export const transactionService = {
       return this.getDefaultPayoutSlabs();
     }
     
-    const schemaPGRate = await prisma.schemaPGRate.findUnique({
+    // Use new SchemaPayoutConfig model
+    const payoutConfig = await prisma.schemaPayoutConfig.findUnique({
       where: {
         schemaId_pgId: { schemaId, pgId },
       },
       include: {
-        payoutSlabs: {
+        slabs: {
           orderBy: { minAmount: 'asc' },
         },
       },
     });
     
-    if (!schemaPGRate || schemaPGRate.payoutSlabs.length === 0) {
+    if (!payoutConfig || payoutConfig.slabs.length === 0) {
       return this.getDefaultPayoutSlabs();
     }
     
-    return schemaPGRate.payoutSlabs;
+    return payoutConfig.slabs;
   },
   
   // Default payout slabs
@@ -423,22 +423,6 @@ export const transactionService = {
     }
     
     // Calculate and distribute commissions
-    // First, try to determine card type from response if available
-    if (pgResponse && (pgResponse.cardTypeCode || pgResponse.cardNetwork || pgResponse.cardCategory)) {
-      try {
-        const cardType = await cardTypeService.findOrCreateCardTypeFromResponse(
-          transaction.pgId,
-          pgResponse
-        );
-        if (cardType) {
-          transaction.cardTypeId = cardType.id;
-          (transaction as any).cardType = cardType;
-        }
-      } catch (error) {
-        logger.warn(`Failed to resolve card type from response: ${error}`);
-      }
-    }
-
     const commissions = await this.calculateCommissions(transaction);
     
     // Update transaction
@@ -452,7 +436,6 @@ export const transactionService = {
           pgTransactionId: pgResponse?.transactionId,
           platformCommission: Number(commissions.totalCommission),
           completedAt: new Date(),
-          cardTypeId: transaction.cardTypeId, // Save the resolved card type
         },
       });
       
@@ -555,33 +538,14 @@ export const transactionService = {
     const pgId = transaction.pgId;
     const amount = Number(transaction.amount);
     const type = transaction.type as 'PAYIN' | 'PAYOUT';
-    const cardTypeId = transaction.cardTypeId;
     
-    // Get PG base rate (or Card Type base rate if applicable)
+    // Get PG base rate
     let pgBaseRate = 0.02; // Default fallback
-    
-    if (cardTypeId) {
-      // If card type is known, use its base rate
-      let cardType = (transaction as any).cardType;
-      if (!cardType) {
-        cardType = await prisma.cardType.findUnique({ where: { id: cardTypeId } });
-      }
-      
-      if (cardType) {
-        pgBaseRate = cardType.baseRate;
-      } else {
-        // Fallback to PG
-        const pg = await prisma.paymentGateway.findUnique({ where: { id: pgId } });
-        if (pg) pgBaseRate = pg.baseRate;
-      }
-    } else {
-      // Standard PG base rate
-      const pg = await prisma.paymentGateway.findUnique({ where: { id: pgId } });
-      if (!pg) {
-        return { breakdown, totalCommission: new Decimal(0) };
-      }
-      pgBaseRate = Number(pg.baseRate);
+    const pg = await prisma.paymentGateway.findUnique({ where: { id: pgId } });
+    if (!pg) {
+      return { breakdown, totalCommission: new Decimal(0) };
     }
+    pgBaseRate = Number(pg.baseRate || 0.02);
     
     // Walk up the hierarchy from initiator
     let currentUserId = transaction.initiatorId;
@@ -600,15 +564,11 @@ export const transactionService = {
       let userRate: number;
       
       if (user.role === 'ADMIN') {
-        // Admin's cost is the PG/CardType base rate
+        // Admin's cost is the PG base rate
         userRate = pgBaseRate;
       } else {
-        // Get rate from UserPGRate or UserCardTypeRate
-        if (cardTypeId && type === 'PAYIN') {
-          userRate = await cardTypeService.getUserCardTypeRate(currentUserId, cardTypeId);
-        } else {
-          userRate = await rateService.getUserRate(currentUserId, pgId, type);
-        }
+        // Get rate from channel-based system
+        userRate = await rateService.getUserRate(currentUserId, pgId, type);
       }
       
       // Calculate commission only if we know what we charged the child
@@ -1005,157 +965,6 @@ export const transactionService = {
     });
     
     return updated;
-  },
-  
-  /**
-   * Update transaction with card type information from PG response
-   * Call this when processing webhook or status check response
-   */
-  async updateTransactionWithCardType(
-    transactionId: string,
-    pgResponse: {
-      cardTypeCode?: string;
-      internalPG?: string;
-      cardNetwork?: string;
-      cardCategory?: string;
-      cardLast4?: string;
-      paymentMethod?: string;
-    }
-  ) {
-    const transaction = await prisma.transaction.findFirst({
-      where: {
-        OR: [
-          { id: transactionId },
-          { transactionId: transactionId },
-        ],
-      },
-    });
-    
-    if (!transaction) {
-      throw new AppError('Transaction not found', 404);
-    }
-    
-    // Find or create card type
-    const cardType = await cardTypeService.findOrCreateCardTypeFromResponse(
-      transaction.pgId,
-      pgResponse
-    );
-    
-    // Update transaction with card type
-    await prisma.transaction.update({
-      where: { id: transaction.id },
-      data: {
-        cardTypeId: cardType.id,
-        cardTypeCode: cardType.code,
-        cardLast4: pgResponse.cardLast4,
-        cardNetwork: pgResponse.cardNetwork,
-        paymentMethod: pgResponse.paymentMethod,
-      },
-    });
-    
-    return cardType;
-  },
-  
-  /**
-   * Recalculate charges for a transaction based on card type
-   * Call this when card type is determined after initial transaction creation
-   */
-  async recalculateChargesWithCardType(transactionId: string, cardTypeCode: string) {
-    const transaction = await prisma.transaction.findFirst({
-      where: {
-        OR: [
-          { id: transactionId },
-          { transactionId: transactionId },
-        ],
-      },
-      include: {
-        initiator: true,
-        paymentGateway: true,
-      },
-    });
-    
-    if (!transaction) {
-      throw new AppError('Transaction not found', 404);
-    }
-    
-    // Only recalculate for pending PAYIN transactions
-    if (transaction.status !== 'PENDING' || transaction.type !== 'PAYIN') {
-      return null;
-    }
-    
-    // Get card type rate
-    const rateResult = await cardTypeService.getTransactionRate(
-      transaction.initiatorId,
-      transaction.pgId,
-      cardTypeCode
-    );
-    
-    // Calculate new charges
-    const amount = new Decimal(transaction.amount);
-    const newCharges = amount.mul(rateResult.rate);
-    const newNetAmount = amount.sub(newCharges);
-    
-    // Update transaction
-    const updated = await prisma.transaction.update({
-      where: { id: transaction.id },
-      data: {
-        cardTypeId: rateResult.cardTypeId,
-        pgCharges: Number(newCharges),
-        netAmount: Number(newNetAmount),
-        pgResponse: JSON.stringify({
-          ...JSON.parse(transaction.pgResponse || '{}'),
-          rateSource: rateResult.source,
-          originalCharges: transaction.pgCharges,
-          recalculatedAt: new Date().toISOString(),
-        }),
-      },
-    });
-    
-    console.log(`[Transaction] Recalculated charges for ${transactionId}: ${rateResult.rate * 100}% (${rateResult.source})`);
-    
-    return updated;
-  },
-  
-  /**
-   * Get transaction rate breakdown for display
-   */
-  async getTransactionRateBreakdown(
-    userId: string,
-    pgId: string,
-    amount: number,
-    cardTypeCode?: string
-  ) {
-    const rateResult = await cardTypeService.getTransactionRate(userId, pgId, cardTypeCode);
-    
-    const charges = amount * rateResult.rate;
-    const netAmount = amount - charges;
-    
-    // Get card type details if available
-    let cardTypeDetails = null;
-    if (rateResult.cardTypeId) {
-      cardTypeDetails = await prisma.cardType.findUnique({
-        where: { id: rateResult.cardTypeId },
-        select: {
-          id: true,
-          code: true,
-          name: true,
-          internalPG: true,
-          cardNetwork: true,
-          cardCategory: true,
-          baseRate: true,
-        },
-      });
-    }
-    
-    return {
-      amount,
-      rate: rateResult.rate,
-      ratePercent: `${(rateResult.rate * 100).toFixed(2)}%`,
-      source: rateResult.source,
-      charges,
-      netAmount,
-      cardType: cardTypeDetails,
-    };
   },
 };
 

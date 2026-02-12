@@ -4,13 +4,12 @@ import userRoutes from './user.routes';
 import walletRoutes from './wallet.routes';
 import transactionRoutes from './transaction.routes';
 import pgRoutes from './pg.routes';
-import schemaRoutes from './schema.routes';
+// import schemaRoutes from './schema.routes'; // DEPRECATED - moved to deprecated folder
 import beneficiaryRoutes from './beneficiary.routes';
 import webhookRoutes from './webhook.routes';
 import rateRoutes from './rate.routes';
 import ledgerRoutes from './ledger.routes';
 import storageRoutes from './storage.routes';
-import cardTypeRoutes from './cardType.routes';
 import healthRoutes from './health.routes';
 import securityRoutes from './security.routes';
 import announcementRoutes from './announcement.routes';
@@ -41,13 +40,13 @@ router.use('/razorpay', razorpayRoutes);
 router.use('/sabpaisa', sabpaisaRoutes);
 router.use('/cashfree', cashfreeRoutes);
 router.use('/bbps', bbpsRoutes);
-router.use('/schemas', schemaRoutes);
+// router.use('/schemas', schemaRoutes); // DEPRECATED - use channel-based system
 router.use('/beneficiaries', beneficiaryRoutes);
 router.use('/webhooks', webhookRoutes);
 router.use('/rates', rateRoutes);
 router.use('/ledger', ledgerRoutes);
 router.use('/storage', storageRoutes);
-router.use('/card-types', cardTypeRoutes);
+// router.use('/card-types', cardTypeRoutes); // DEPRECATED - removed
 router.use('/system-settings', systemSettingsRoutes);
 
 // New rate system routes

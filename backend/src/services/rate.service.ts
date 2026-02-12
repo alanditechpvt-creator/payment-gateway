@@ -1,7 +1,6 @@
 import { Decimal } from '@prisma/client/runtime/library';
 import prisma from '../lib/prisma';
 import { AppError } from '../middleware/errorHandler';
-import { cardTypeService } from './cardType.service';
 
 /**
  * Hierarchical Rate Assignment System
@@ -29,7 +28,7 @@ export const rateService = {
    * Get the rate assigned to a user for a specific PG
    * Returns the rate they are CHARGED (their cost)
    */
-  async getUserRate(userId: string, pgId: string, type: 'PAYIN' | 'PAYOUT' = 'PAYIN'): Promise<number> {
+  async getUserRate(userId: string, pgId: string, type: 'PAYIN' | 'PAYOUT' = 'PAYIN', channelId?: string): Promise<number> {
     // Check if PG is assigned to user
     const pgAssignment = await prisma.userPGAssignment.findUnique({
       where: {
@@ -41,13 +40,25 @@ export const rateService = {
       throw new AppError('Payment gateway not assigned to user', 404);
     }
     
-    // For now, return a default rate
-    // TODO: Calculate from channel-based rates
+    // If specific channel requested, check for user-level override
+    if (channelId && type === 'PAYIN') {
+      const userRate = await prisma.userPayinRate.findUnique({
+        where: {
+          userId_channelId: { userId, channelId },
+        },
+      });
+      
+      if (userRate) {
+        return Number(userRate.payinRate);
+      }
+    }
+    
+    // Fall back to PG base rate
     const pg = await prisma.paymentGateway.findUnique({
       where: { id: pgId },
     });
     
-    return pg?.baseRate || 0.02;
+    return Number(pg?.baseRate || 0.02);
   },
   
   /**
@@ -63,13 +74,13 @@ export const rateService = {
       },
     });
     
-    // Map to old format for compatibility
+    // Map to format with baseRate
     const rates = pgAssignments.map(assignment => ({
       id: assignment.id,
       userId: assignment.userId,
       pgId: assignment.pgId,
-      payinRate: assignment.paymentGateway.baseRate,
-      payoutRate: assignment.paymentGateway.baseRate,
+      payinRate: Number(assignment.paymentGateway.baseRate),
+      payoutRate: Number(assignment.paymentGateway.baseRate),
       isEnabled: assignment.isEnabled,
       createdAt: assignment.createdAt,
       updatedAt: assignment.updatedAt,
@@ -99,8 +110,8 @@ export const rateService = {
         where: { id: pgId },
       });
       return {
-        payinRate: pg?.baseRate || 0,
-        payoutRate: pg?.baseRate || 0,
+        payinRate: Number(pg?.baseRate || 0.02),
+        payoutRate: Number(pg?.baseRate || 0.02),
       };
     }
     
@@ -116,8 +127,8 @@ export const rateService = {
     
     if (pgAssignment && pgAssignment.isEnabled) {
       return {
-        payinRate: pgAssignment.paymentGateway.baseRate,
-        payoutRate: pgAssignment.paymentGateway.baseRate,
+        payinRate: Number(pgAssignment.paymentGateway.baseRate),
+        payoutRate: Number(pgAssignment.paymentGateway.baseRate),
       };
     }
     
@@ -225,6 +236,32 @@ export const rateService = {
         isEnabled: true,
       },
     });
+    
+    // Create UserPayinRate for each channel with the specified rate
+    // Get all PAYIN channels for this PG
+    const channels = await prisma.transactionChannel.findMany({
+      where: { pgId, transactionType: 'PAYIN' },
+    });
+    
+    // Create/update UserPayinRate for each channel
+    for (const channel of channels) {
+      await prisma.userPayinRate.upsert({
+        where: {
+          userId_channelId: { userId: targetUserId, channelId: channel.id },
+        },
+        create: {
+          userId: targetUserId,
+          channelId: channel.id,
+          payinRate,
+          assignedById: assignerId,
+        },
+        update: {
+          payinRate,
+          assignedById: assignerId,
+          updatedAt: new Date(),
+        },
+      });
+    }
 
     // For now, return a compatible response structure
     // TODO: Migrate to channel-based rate assignment
