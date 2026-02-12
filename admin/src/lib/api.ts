@@ -117,6 +117,11 @@ export const pgApi = {
   togglePGStatus: (pgId: string, isActive: boolean) =>
     api.post(`/pg/${pgId}/toggle`, { isActive }),
   getPGStats: (pgId: string, params?: any) => api.get(`/pg/${pgId}/stats`, { params }),
+  // Update PG base rate (Admin only)
+  updateBaseRate: (pgId: string, baseRate: number) => 
+    api.put(`/pg/${pgId}/base-rate`, { baseRate }),
+  // Get channels for a PG
+  getChannels: (pgId: string) => api.get(`/pg/${pgId}/channels`),
 };
 
 export const schemaApi = {
@@ -168,6 +173,15 @@ export const rateApi = {
   // Preview commission calculation
   previewCommissions: (pgId: string, amount: number, type: 'PAYIN' | 'PAYOUT') =>
     api.post('/rates/preview-commissions', { pgId, amount, type }),
+  // Get user's channel rates for a PG
+  getUserChannelRates: (userId: string, pgId: string) => 
+    api.get(`/rates/user/${userId}/channels/${pgId}`),
+  // Update single channel rate
+  updateChannelRate: (userId: string, channelId: string, payinRate: number) =>
+    api.put(`/rates/user/${userId}/channel/${channelId}`, { payinRate }),
+  // Bulk update channel rates
+  bulkUpdateChannelRates: (userId: string, pgId: string, rates: Array<{ channelId: string; payinRate: number }>) =>
+    api.put(`/rates/user/${userId}/channels`, { pgId, rates }),
 };
 
 // Card Type Management (for PG-specific card types like visa-normal, master-corporate, etc.)
