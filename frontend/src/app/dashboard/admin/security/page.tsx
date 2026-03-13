@@ -209,10 +209,10 @@ export default function AdminSecurityPage() {
           />
           <button
             onClick={() => saveMutation.mutate()}
-            disabled={saveMutation.isLoading}
+            disabled={saveMutation.isPending}
             className="inline-flex items-center px-4 py-2 rounded-xl bg-primary-500 hover:bg-primary-600 text-sm font-semibold disabled:opacity-60 disabled:cursor-not-allowed"
           >
-            {saveMutation.isLoading ? 'Saving...' : 'Save security settings'}
+            {saveMutation.isPending ? 'Saving...' : 'Save security settings'}
           </button>
         </div>
       </div>
@@ -251,10 +251,10 @@ export default function AdminSecurityPage() {
         </div>
         <button
           onClick={() => unlockMutation.mutate()}
-          disabled={unlockMutation.isLoading}
+          disabled={unlockMutation.isPending}
           className="inline-flex items-center px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-sm font-semibold disabled:opacity-60 disabled:cursor-not-allowed"
         >
-          {unlockMutation.isLoading ? 'Unlocking...' : 'Unlock account'}
+          {unlockMutation.isPending ? 'Unlocking...' : 'Unlock account'}
         </button>
       </div>
     </div>
