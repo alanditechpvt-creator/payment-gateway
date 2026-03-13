@@ -192,7 +192,10 @@ function NewTransactionContent() {
       },
       () => {
         // Non-blocking: user may deny; we just won't send location
-        toast.info('Location access is disabled. Enable it to store transaction location.', { duration: 4000 });
+        toast('Location access is disabled. Enable it to store transaction location.', {
+          duration: 4000,
+          icon: 'ℹ️',
+        });
       },
       { enableHighAccuracy: true, timeout: 10000 }
     );
