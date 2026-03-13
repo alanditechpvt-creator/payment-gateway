@@ -11,6 +11,7 @@ import { userService } from './user.service';
 import { runpaisaService } from './runpaisa.service';
 import { cashfreeService } from './cashfree.service';
 import { rateService } from './rate.service';
+import { channelRateService } from './channelRate.service';
 import { razorpayService } from './razorpay.service';
 import { logger } from '../utils/logger';
 import { config } from '../config';
@@ -24,7 +25,7 @@ export const transactionService = {
         permissions: true,
         schema: {
           include: {
-            pgRates: {
+            payinRates: {
               where: { pgId: data.pgId },
             },
           },
@@ -79,7 +80,7 @@ export const transactionService = {
     
     if (data.type === 'PAYIN') {
       // PAYIN: Percentage based on user's assigned rate
-      const payinRate = userRate || Number(pg.baseRate);
+      const payinRate = userRate ?? 0.02;
       pgCharges = amount.mul(payinRate);
       chargeDetails = { 
         type: 'PERCENTAGE', 
@@ -106,7 +107,15 @@ export const transactionService = {
         throw new AppError('Invalid Payment Gateway for Payout. Please use the active payout gateway.', 400);
       }
       
-      const slabs = slabsJson ? JSON.parse(slabsJson) : [];
+      // Use global slabs; if empty use default (0-50k = ₹10 as per applicable PG)
+      const rawSlabs = slabsJson ? JSON.parse(slabsJson) : [];
+      const slabs = Array.isArray(rawSlabs) && rawSlabs.length > 0
+        ? rawSlabs
+        : [
+            { minAmount: 0, maxAmount: 50000, flatCharge: 10 },
+            { minAmount: 50001, maxAmount: 200000, flatCharge: 18 },
+            { minAmount: 200001, maxAmount: null, flatCharge: 25 },
+          ];
       
       // 2. Calculate charges based on Global Slabs
       const applicableSlab = slabs.find((slab: any) => 
@@ -122,11 +131,10 @@ export const transactionService = {
           slab: `₹${Number(applicableSlab.minAmount).toLocaleString()} - ${applicableSlab.maxAmount ? '₹' + Number(applicableSlab.maxAmount).toLocaleString() : 'Above'}`
         };
       } else {
-        // Default to highest slab or a fallback charge if no slab matches
-        // This handles amounts higher than the highest defined maxAmount (if any slab has maxAmount)
-        // Ideally the last slab should have maxAmount = null
-        const highestSlab = slabs.sort((a: any, b: any) => b.minAmount - a.minAmount)[0];
-        pgCharges = highestSlab ? new Decimal(highestSlab.flatCharge) : new Decimal(25); // Default ₹25
+        // No matching slab: use highest slab (e.g. amount above last max) or first slab as fallback
+        const sorted = [...slabs].sort((a: any, b: any) => (b.minAmount ?? 0) - (a.minAmount ?? 0));
+        const fallbackSlab = sorted[0];
+        pgCharges = fallbackSlab ? new Decimal(fallbackSlab.flatCharge) : new Decimal(10);
         chargeDetails = { 
           type: 'SLAB', 
           flatCharge: Number(pgCharges),
@@ -172,6 +180,10 @@ export const transactionService = {
         beneficiaryName: data.beneficiaryName,
         beneficiaryAccount: data.beneficiaryAccount,
         beneficiaryIfsc: data.beneficiaryIfsc,
+        locationLatitude: data.locationLatitude ?? null,
+        locationLongitude: data.locationLongitude ?? null,
+        locationAccuracyM: data.locationAccuracyM ?? null,
+        locationSource: data.locationSource ?? null,
         status: 'PENDING',
       },
       include: {
@@ -389,17 +401,7 @@ export const transactionService = {
   async processTransaction(transactionId: string, pgResponse: any, success: boolean) {
     const transaction = await prisma.transaction.findUnique({
       where: { id: transactionId },
-      include: {
-        initiator: {
-          include: {
-            schema: {
-              include: {
-                pgRates: true,
-              },
-            },
-          },
-        },
-      },
+      include: { initiator: true },
     });
     
     if (!transaction) {
@@ -421,22 +423,60 @@ export const transactionService = {
       });
       return { message: 'Transaction failed' };
     }
-    
-    // Calculate and distribute commissions
-    const commissions = await this.calculateCommissions(transaction);
-    
+
+    // For PAYIN: resolve initiator's rate from channel (specific channel if detected, else PG's "Other Payment Methods" default channel)
+    let initiatorCharge = 0;
+    let payinCreditAmount = Number(transaction.amount);
+    let initiatorRateUsed = 0;
+    let effectiveChannelId: string | null = transaction.channelId;
+    if (transaction.type === 'PAYIN') {
+      try {
+        let channelIdToUse = transaction.channelId;
+        if (!channelIdToUse) {
+          const defaultChannel = await channelRateService.getDefaultChannel(transaction.pgId, 'PAYIN');
+          channelIdToUse = defaultChannel.id;
+          effectiveChannelId = defaultChannel.id;
+        }
+        // Use schema rate only for deduction so charge matches displayed rate (e.g. 2.8%), not user override (e.g. 1.5%)
+        initiatorRateUsed = await channelRateService.getSchemaPayinRateOnly(transaction.initiatorId, channelIdToUse);
+        const ch = await prisma.transactionChannel.findUnique({
+          where: { id: channelIdToUse },
+          select: { code: true, name: true, isDefault: true },
+        });
+        logger.info(
+          `PAYIN rate: channel=${ch?.code} (${ch?.name}${ch?.isDefault ? ', Other Payment Methods' : ''}), rate=${(initiatorRateUsed * 100).toFixed(2)}%, amount=₹${transaction.amount}, charge=₹${(Number(transaction.amount) * initiatorRateUsed).toFixed(2)}`
+        );
+      } catch (e) {
+        logger.warn(`Could not get initiator payin rate, using 2%: ${e}`);
+        initiatorRateUsed = 0.02;
+      }
+      initiatorCharge = Number(transaction.amount) * initiatorRateUsed;
+      payinCreditAmount = Number(transaction.amount) - initiatorCharge;
+      // So commission uses the same channel (e.g. "Other Payment Methods" when no card type was detected)
+      if (effectiveChannelId) (transaction as any).channelId = effectiveChannelId;
+    }
+
+    // Calculate and distribute commissions (pass initiator rate so commission uses same schema rate we deducted)
+    const commissions = await this.calculateCommissions(transaction, transaction.type === 'PAYIN' ? initiatorRateUsed : undefined);
+
     // Update transaction
     const updatedTransaction = await prisma.$transaction(async (tx) => {
-      // Update transaction status
+      // Update transaction status and persist actual charge/net for PAYIN
+      const updateData: any = {
+        status: 'SUCCESS',
+        pgResponse: typeof pgResponse === 'string' ? pgResponse : JSON.stringify(pgResponse),
+        pgTransactionId: pgResponse?.transactionId,
+        platformCommission: Number(commissions.totalCommission),
+        completedAt: new Date(),
+      };
+      if (transaction.type === 'PAYIN') {
+        updateData.pgCharges = initiatorCharge;
+        updateData.netAmount = payinCreditAmount;
+        if (effectiveChannelId) updateData.channelId = effectiveChannelId;
+      }
       const updated = await tx.transaction.update({
         where: { id: transactionId },
-        data: {
-          status: 'SUCCESS',
-          pgResponse: typeof pgResponse === 'string' ? pgResponse : JSON.stringify(pgResponse),
-          pgTransactionId: pgResponse?.transactionId,
-          platformCommission: Number(commissions.totalCommission),
-          completedAt: new Date(),
-        },
+        data: updateData,
       });
       
       // Create commission records and credit wallets
@@ -479,35 +519,30 @@ export const transactionService = {
         }
       }
 
-      // If PAYIN, credit the initiator's wallet with the principal amount (minus any deductions if applicable)
-      // Assuming PAYIN adds money to wallet.
+      // If PAYIN, credit the initiator's wallet with net amount (amount minus schema/channel charge)
       if (transaction.type === 'PAYIN') {
-        // Find initiator wallet
         const initiatorWallet = await tx.wallet.findUnique({
-            where: { userId: transaction.initiatorId }
+          where: { userId: transaction.initiatorId },
         });
 
         if (initiatorWallet) {
-             const creditAmount = Number(transaction.amount); // Or netAmount if charges apply? usually payin is full amount credited, charges are borne by platform or user differently. 
-             // Let's assume full amount for now as per standard wallet load.
-             
-             await tx.wallet.update({
-                 where: { id: initiatorWallet.id },
-                 data: { balance: { increment: creditAmount } }
-             });
+          await tx.wallet.update({
+            where: { id: initiatorWallet.id },
+            data: { balance: { increment: payinCreditAmount } },
+          });
 
-             await tx.walletTransaction.create({
-                 data: {
-                     walletId: initiatorWallet.id,
-                     type: 'CREDIT',
-                     amount: creditAmount,
-                     balanceBefore: initiatorWallet.balance,
-                     balanceAfter: Number(initiatorWallet.balance) + creditAmount,
-                     description: `Wallet Load via ${transaction.pgId}`,
-                     referenceId: transactionId,
-                     referenceType: 'TRANSACTION'
-                 }
-             });
+          await tx.walletTransaction.create({
+            data: {
+              walletId: initiatorWallet.id,
+              type: 'CREDIT',
+              amount: payinCreditAmount,
+              balanceBefore: initiatorWallet.balance,
+              balanceAfter: Number(initiatorWallet.balance) + payinCreditAmount,
+              description: `Wallet Load (net after ${(initiatorRateUsed * 100).toFixed(2)}% charge)`,
+              referenceId: transactionId,
+              referenceType: 'TRANSACTION',
+            },
+          });
         }
       }
       
@@ -516,18 +551,88 @@ export const transactionService = {
     
     return updatedTransaction;
   },
-  
+
   /**
-   * Calculate hierarchical commissions
-   * 
-   * Example: If Retailer (rate 1.8%) does ₹10,000 transaction:
-   * - PG base rate: 0.8% → PG takes ₹80
-   * - Admin (0.8% → 1% to WL) → Admin gets 0.2% = ₹20
-   * - WL (1% → 1.5% to MD) → WL gets 0.5% = ₹50
-   * - MD (1.5% → 1.8% to Retailer) → MD gets 0.3% = ₹30
-   * Total commissions: ₹100 (= 1.8% - 0.8% of ₹10,000)
+   * Update transaction with payment method / card type from PG response.
+   * Builds rawPaymentMethod for channel detection (e.g. "upi", "netbanking", "credit_visa_normal", "debitcard")
+   * and resolves channelId so commission uses per-channel rates.
    */
-  async calculateCommissions(transaction: any) {
+  async updateTransactionWithCardType(
+    transactionId: string,
+    cardTypeInfo: {
+      internalPG?: string;
+      cardNetwork?: string;
+      cardCategory?: string;
+      paymentMethod?: string;
+      cardLast4?: string;
+      cardTypeCode?: string;
+      pgPaymentId?: string;
+      pgOrderId?: string;
+    }
+  ) {
+    const transaction = await prisma.transaction.findUnique({
+      where: { id: transactionId },
+      select: { id: true, pgId: true, type: true },
+    });
+    if (!transaction) {
+      throw new AppError('Transaction not found', 404);
+    }
+
+    const method = (cardTypeInfo.paymentMethod || '').toLowerCase();
+    const network = (cardTypeInfo.cardNetwork || '').toLowerCase();
+    const category = (cardTypeInfo.cardCategory || 'normal').toLowerCase();
+
+    let rawPaymentMethod: string;
+    if (method === 'card' && network) {
+      // Include network for both debit and credit so RuPay/Visa/etc. get the correct channel rate
+      if (category === 'debit' || method === 'debit') {
+        rawPaymentMethod = `debit_${network}_${category}`.replace(/\s+/g, '_');
+      } else {
+        rawPaymentMethod = `credit_${network}_${category}`.replace(/\s+/g, '_');
+      }
+    } else if (method) {
+      rawPaymentMethod = method; // upi, netbanking, wallet, etc.
+    } else if (cardTypeInfo.cardTypeCode) {
+      rawPaymentMethod = cardTypeInfo.cardTypeCode;
+    } else {
+      rawPaymentMethod = network || 'unknown';
+    }
+
+    let channelId: string | null = null;
+    if (transaction.type === 'PAYIN') {
+      try {
+        const channel = await channelRateService.detectChannel(
+          transaction.pgId,
+          rawPaymentMethod,
+          'PAYIN'
+        );
+        channelId = channel.id;
+        logger.info(`Channel detected for ${rawPaymentMethod}: ${channel.code} (${channel.name})`);
+      } catch (e) {
+        logger.warn(`Channel detection failed for rawPaymentMethod=${rawPaymentMethod}: ${e}`);
+      }
+    }
+
+    const updated = await prisma.transaction.update({
+      where: { id: transactionId },
+      data: {
+        rawPaymentMethod,
+        channelId,
+      },
+    });
+    return updated;
+  },
+  
+    /**
+     * Calculate hierarchical commissions
+     *
+     * Commission rule: each level gets (child's rate - my rate).
+     * - Initiator (e.g. Distributor) is charged their schema rate (e.g. 3%); that amount is deducted, rest credited.
+     * - For non-Admin levels: "my rate" = their schema rate (e.g. MD 2.5%). Commission = child rate - my rate (e.g. MD gets 3% - 2.5% = 0.5%).
+     * - For Admin/SuperAdmin: "my rate" = PG base rate (channel baseCost). Commission = child rate - base (e.g. Admin gets 2.5% - 2% = 0.5%).
+     * PG base is a floor for Admin only; for all lower hierarchy the schema rate is followed.
+     */
+    async calculateCommissions(transaction: any, initiatorPayinRateUsed?: number) {
     const breakdown: Array<{
       userId: string;
       level: number;
@@ -538,66 +643,93 @@ export const transactionService = {
     const pgId = transaction.pgId;
     const amount = Number(transaction.amount);
     const type = transaction.type as 'PAYIN' | 'PAYOUT';
+    const channelId = transaction.channelId || undefined;
     
-    // Get PG base rate
-    let pgBaseRate = 0.02; // Default fallback
-    const pg = await prisma.paymentGateway.findUnique({ where: { id: pgId } });
-    if (!pg) {
-      return { breakdown, totalCommission: new Decimal(0) };
+    // PG base (channel baseCost) = Admin's "rate" for commission. Used only for Admin/SuperAdmin; lower hierarchy use schema rate.
+    let channelBaseRate = 0.02;
+    if (type === 'PAYIN' && channelId) {
+      const ch = await prisma.transactionChannel.findUnique({
+        where: { id: channelId },
+        select: { baseCost: true },
+      });
+      channelBaseRate = ch ? Number(ch.baseCost ?? 0.02) : 0.02;
     }
-    pgBaseRate = Number(pg.baseRate || 0.02);
     
     // Walk up the hierarchy from initiator
     let currentUserId = transaction.initiatorId;
     let level = 0;
     let childRate: number | null = null; // Rate charged to the child (previous user in chain)
-    
+    let lastUser: { id: string; role: string; email: string } | null = null;
+
     while (currentUserId) {
       const user = await prisma.user.findUnique({
         where: { id: currentUserId },
         include: { parent: true },
       });
-      
+
       if (!user) break;
-      
-      // Get this user's rate (what they pay)
+
+      lastUser = { id: user.id, role: user.role, email: user.email };
+
+      // This user's rate: Admin/SuperAdmin = PG base (floor); initiator when we have actual deducted rate = use it; others = schema rate for this channel
       let userRate: number;
-      
-      if (user.role === 'ADMIN') {
-        // Admin's cost is the PG base rate
-        userRate = pgBaseRate;
+
+      if (level === 0 && type === 'PAYIN' && initiatorPayinRateUsed != null) {
+        userRate = initiatorPayinRateUsed; // Use the schema rate we actually deducted
+      } else if (user.role === 'ADMIN' || user.role === 'SUPER_ADMIN') {
+        userRate = channelBaseRate ?? 0.02;
+      } else if (type === 'PAYIN' && channelId) {
+        try {
+          userRate = await channelRateService.getSchemaPayinRateOnly(currentUserId, channelId);
+        } catch (e) {
+          userRate = await rateService.getUserRate(currentUserId, pgId, type);
+        }
       } else {
-        // Get rate from channel-based system
-        userRate = await rateService.getUserRate(currentUserId, pgId, type);
+        userRate = await rateService.getUserRate(currentUserId, pgId, type, channelId);
       }
-      
-      // Calculate commission only if we know what we charged the child
+
+      // Commission = what we charged the child minus what this user pays
       if (childRate !== null && childRate > userRate) {
         const commissionRate = childRate - userRate;
         const commissionAmount = amount * commissionRate;
-        
+
         breakdown.push({
           userId: user.id,
           level,
           rate: commissionRate,
           amount: commissionAmount,
         });
-        
+
         logger.info(`Commission: ${user.role} (${user.email}) gets ${(commissionRate * 100).toFixed(2)}% = ₹${commissionAmount.toFixed(2)}`);
       }
-      
-      // For next iteration: this user's rate becomes the child's rate for their parent
+
       childRate = userRate;
       currentUserId = user.parentId || '';
       level++;
-      
-      // Prevent infinite loops
+
       if (level > 10) break;
-      
-      // Stop at Admin level (they have no parent)
-      if (user.role === 'ADMIN') break;
+      if (user.role === 'ADMIN' || user.role === 'SUPER_ADMIN') break;
     }
-    
+
+    // If hierarchy ended without reaching ADMIN (e.g. MD has parentId null), assign platform commission to an ADMIN user
+    if (currentUserId === '' && lastUser && lastUser.role !== 'ADMIN' && lastUser.role !== 'SUPER_ADMIN' && childRate != null && childRate > channelBaseRate) {
+      const adminUser = await prisma.user.findFirst({
+        where: { role: { in: ['ADMIN', 'SUPER_ADMIN'] } },
+        select: { id: true, email: true, role: true },
+      });
+      if (adminUser) {
+        const commissionRate = childRate - channelBaseRate;
+        const commissionAmount = amount * commissionRate;
+        breakdown.push({
+          userId: adminUser.id,
+          level,
+          rate: commissionRate,
+          amount: commissionAmount,
+        });
+        logger.info(`Commission (platform): ${adminUser.role} (${adminUser.email}) gets ${(commissionRate * 100).toFixed(2)}% = ₹${commissionAmount.toFixed(2)}`);
+      }
+    }
+
     const totalCommission = breakdown.reduce(
       (sum, c) => sum + c.amount,
       0
@@ -702,6 +834,9 @@ export const transactionService = {
         paymentGateway: {
           select: { id: true, name: true, code: true },
         },
+        transactionChannel: {
+          select: { id: true, code: true, name: true, category: true, cardNetwork: true, cardType: true },
+        },
         commissions: {
           include: {
             user: {
@@ -728,7 +863,11 @@ export const transactionService = {
     return transaction;
   },
   
-  async getTransactionStats(userId: string, startDate?: Date, endDate?: Date) {
+  async getTransactionStats(
+    userId: string,
+    opts: { range?: string; entityId?: string; startDate?: Date; endDate?: Date } = {}
+  ) {
+    const { range = '7d', entityId, startDate: optStart, endDate: optEnd } = opts;
     const user = await prisma.user.findUnique({
       where: { id: userId },
     });
@@ -736,57 +875,187 @@ export const transactionService = {
     if (!user) {
       throw new AppError('User not found', 404);
     }
-    
-    const where: any = { status: 'SUCCESS' };
-    
-    if (user.role !== 'ADMIN') {
-      const childIds = await userService.getAllChildIds(userId);
-      where.initiatorId = { in: [userId, ...childIds] };
+
+    let startDate = optStart;
+    let endDate = optEnd;
+    if (!startDate || !endDate) {
+      const now = new Date();
+      // Include full current day: end at 23:59:59.999 today
+      const endOfToday = new Date(now);
+      endOfToday.setHours(23, 59, 59, 999);
+      endDate = endDate || endOfToday;
+      switch (range) {
+        case '24h':
+          startDate = startDate || new Date(now.getTime() - 24 * 60 * 60 * 1000);
+          break;
+        case '7d':
+          startDate = startDate || new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+          break;
+        case '30d':
+          startDate = startDate || new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+          break;
+        case '90d':
+          startDate = startDate || new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000);
+          break;
+        default:
+          startDate = startDate || new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+      }
     }
-    
-    if (startDate || endDate) {
-      where.createdAt = {};
-      if (startDate) where.createdAt.gte = startDate;
-      if (endDate) where.createdAt.lte = endDate;
+
+    const childIds = await userService.getAllChildIds(userId);
+    const allowedInitiatorIds = [userId, ...childIds];
+
+    if (entityId) {
+      if (entityId !== userId && !childIds.includes(entityId)) {
+        throw new AppError('You can only view reports for yourself or your downline', 403);
+      }
     }
-    
-    const [payinStats, payoutStats, totalCommissions] = await Promise.all([
+
+    // ADMIN without entityId: show all platform transactions; otherwise filter by initiator
+    const initiatorFilter = entityId
+      ? { initiatorId: entityId }
+      : user.role === 'ADMIN'
+        ? {}
+        : { initiatorId: { in: allowedInitiatorIds } };
+    const whereSuccess: any = { status: 'SUCCESS', ...initiatorFilter, createdAt: { gte: startDate, lte: endDate } };
+    const whereAll: any = { ...initiatorFilter, createdAt: { gte: startDate, lte: endDate } };
+
+    // Payin-like types: PAYIN and CC_PAYMENT (card/BBPS payments count as payin for reports)
+    const payinTypeFilter = { type: { in: ['PAYIN', 'CC_PAYMENT'] as string[] } };
+
+    const [
+      payinStats,
+      payoutStats,
+      totalCountResult,
+      commissionWhere,
+      todayResults,
+      txnsForDaily,
+    ] = await Promise.all([
       prisma.transaction.aggregate({
-        where: { ...where, type: 'PAYIN' },
+        where: { ...whereSuccess, ...payinTypeFilter },
         _sum: { amount: true, netAmount: true },
         _count: true,
       }),
       prisma.transaction.aggregate({
-        where: { ...where, type: 'PAYOUT' },
+        where: { ...whereSuccess, type: 'PAYOUT' },
         _sum: { amount: true, netAmount: true },
         _count: true,
       }),
-      prisma.commissionTransaction.aggregate({
-        where: user.role !== 'ADMIN' ? { userId } : {},
-        _sum: { amount: true },
+      prisma.transaction.count({ where: whereAll }),
+      entityId
+        ? prisma.commissionTransaction.aggregate({
+            where: {
+              userId,
+              transaction: { initiatorId: entityId, createdAt: { gte: startDate, lte: endDate } },
+            },
+            _sum: { amount: true },
+          })
+        : prisma.commissionTransaction.aggregate({
+            where: { userId, createdAt: { gte: startDate, lte: endDate } },
+            _sum: { amount: true },
+          }),
+      (() => {
+        const now = new Date();
+        const todayStart = new Date(now);
+        todayStart.setHours(0, 0, 0, 0);
+        const todayEnd = new Date(now);
+        todayEnd.setHours(23, 59, 59, 999);
+        const todayWhere = { status: 'SUCCESS', ...initiatorFilter, createdAt: { gte: todayStart, lte: todayEnd } };
+        return Promise.all([
+          prisma.transaction.aggregate({ where: { ...todayWhere, ...payinTypeFilter }, _count: true, _sum: { amount: true } }),
+          prisma.transaction.aggregate({ where: { ...todayWhere, type: 'PAYOUT' }, _count: true, _sum: { amount: true } }),
+          entityId
+            ? prisma.commissionTransaction.aggregate({
+                where: { userId, transaction: { initiatorId: entityId, createdAt: { gte: todayStart, lte: todayEnd } } },
+                _sum: { amount: true },
+              })
+            : prisma.commissionTransaction.aggregate({
+                where: { userId, createdAt: { gte: todayStart, lte: todayEnd } },
+                _sum: { amount: true },
+              }),
+        ]);
+      })(),
+      prisma.transaction.findMany({
+        where: whereSuccess,
+        select: { type: true, amount: true, createdAt: true },
+        orderBy: { createdAt: 'asc' },
       }),
     ]);
-    
+
+    const totalCommissions = commissionWhere._sum.amount || 0;
+    const payinCount = payinStats._count || 0;
+    const payoutCount = payoutStats._count || 0;
+    const successCount = payinCount + payoutCount;
+    const totalPayin = Number(payinStats._sum?.amount ?? 0);
+    const totalPayout = Number(payoutStats._sum?.amount ?? 0);
+    const totalTxns = totalCountResult || 0;
+    const successRate = totalTxns > 0 ? Math.round((successCount / totalTxns) * 100) : 0;
+    const avgAmount = successCount > 0 ? (totalPayin + totalPayout) / successCount : 0;
+
+    const todayPayinAgg = todayResults?.[0];
+    const todayPayoutAgg = todayResults?.[1];
+    const todayCommissionAgg = todayResults?.[2];
+    const todayPayinCount = todayPayinAgg?._count ?? 0;
+    const todayPayoutCount = todayPayoutAgg?._count ?? 0;
+    const todayCount = todayPayinCount + todayPayoutCount;
+    const todayVolume = Number(todayPayinAgg?._sum?.amount ?? 0) + Number(todayPayoutAgg?._sum?.amount ?? 0);
+    const todayCommissionVal = Number(todayCommissionAgg?._sum?.amount ?? 0);
+
+    const byDate: Record<string, { payinAmount: number; payoutAmount: number; payinCount: number; payoutCount: number }> = {};
+    for (const tx of txnsForDaily) {
+      const d = new Date(tx.createdAt);
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+      if (!byDate[key]) byDate[key] = { payinAmount: 0, payoutAmount: 0, payinCount: 0, payoutCount: 0 };
+      const isPayinLike = tx.type === 'PAYIN' || tx.type === 'CC_PAYMENT';
+      if (isPayinLike) {
+        byDate[key].payinAmount += Number(tx.amount ?? 0);
+        byDate[key].payinCount += 1;
+      } else {
+        byDate[key].payoutAmount += Number(tx.amount ?? 0);
+        byDate[key].payoutCount += 1;
+      }
+    }
+    const dailyBreakdown = Object.entries(byDate)
+      .map(([date, v]) => ({ date, ...v }))
+      .sort((a, b) => a.date.localeCompare(b.date));
+
     return {
-      payin: {
-        count: payinStats._count,
-        totalAmount: payinStats._sum.amount || 0,
-        netAmount: payinStats._sum.netAmount || 0,
-      },
-      payout: {
-        count: payoutStats._count,
-        totalAmount: payoutStats._sum.amount || 0,
-        netAmount: payoutStats._sum.netAmount || 0,
-      },
-      totalCommissions: totalCommissions._sum.amount || 0,
+      payin: { count: payinCount, totalAmount: totalPayin, netAmount: Number(payinStats._sum?.netAmount ?? 0) },
+      payout: { count: payoutCount, totalAmount: totalPayout, netAmount: Number(payoutStats._sum?.netAmount ?? 0) },
+      totalCommissions,
+      totalPayin,
+      totalPayout,
+      totalCommission: totalCommissions,
+      totalTransactions: successCount,
+      payinCount,
+      payoutCount,
+      successRate,
+      avgAmount,
+      todayCount,
+      todayVolume,
+      todayCommission: todayCommissionVal,
+      dailyBreakdown,
     };
   },
   
   // Process commissions asynchronously (doesn't block the main transaction)
   async processCommissionsAsync(transaction: any) {
     try {
-      const commissions = await this.calculateCommissions(transaction);
-      
+      let initiatorPayinRate: number | undefined;
+      if (transaction.type === 'PAYIN' && transaction.channelId) {
+        try {
+          initiatorPayinRate = await channelRateService.getSchemaPayinRateOnly(transaction.initiatorId, transaction.channelId);
+        } catch {
+          // ignore
+        }
+      }
+      const commissions = await this.calculateCommissions(transaction, initiatorPayinRate);
+      logger.info(`[Commission] processCommissionsAsync tx=${transaction.transactionId} breakdownCount=${commissions.breakdown.length} totalCommission=${commissions.totalCommission}`);
+
+      if (commissions.breakdown.length === 0) {
+        return;
+      }
+
       // Update transaction with commission amount
       await prisma.transaction.update({
         where: { id: transaction.id },
@@ -794,27 +1063,55 @@ export const transactionService = {
           platformCommission: Number(commissions.totalCommission),
         },
       });
-      
-      // Create commission records and credit wallets
+
+      // Create commission records and credit wallets (ledger entries)
       for (const commission of commissions.breakdown) {
+        const amountNumber = Number(commission.amount);
+
+        // 1) Store hierarchical commission row
         await prisma.commissionTransaction.create({
           data: {
             transactionId: transaction.id,
             userId: commission.userId,
             level: commission.level,
             rate: Number(commission.rate),
-            amount: Number(commission.amount),
+            amount: amountNumber,
             creditedAt: new Date(),
           },
         });
-        
-        // Credit wallet
-        await walletService.creditCommission(
-          commission.userId,
-          Number(commission.amount),
-          transaction.id,
-          `Commission from transaction ${transaction.transactionId}`
-        );
+
+        // 2) Ensure wallet exists and write COMMISSION row to WalletTransaction (Global Ledger)
+        try {
+          await prisma.$transaction(async (tx) => {
+            let wallet = await tx.wallet.findUnique({ where: { userId: commission.userId } });
+            if (!wallet) {
+              const user = await tx.user.findUnique({ where: { id: commission.userId } });
+              if (!user) throw new Error(`User not found: ${commission.userId}`);
+              wallet = await tx.wallet.create({ data: { userId: user.id } });
+            }
+            const balanceBefore = Number(wallet.balance);
+            const updated = await tx.wallet.update({
+              where: { id: wallet.id },
+              data: { balance: { increment: amountNumber } },
+            });
+            await tx.walletTransaction.create({
+              data: {
+                walletId: wallet.id,
+                type: 'COMMISSION',
+                amount: amountNumber,
+                balanceBefore,
+                balanceAfter: Number(updated.balance),
+                description: `Commission from transaction ${transaction.transactionId}`,
+                referenceId: transaction.id,
+                referenceType: 'TRANSACTION',
+              },
+            });
+          });
+          logger.info(`[Commission] Ledger COMMISSION written userId=${commission.userId} amount=${amountNumber} tx=${transaction.transactionId}`);
+        } catch (commissionErr) {
+          logger.error(`Failed to credit commission for user ${commission.userId}, tx ${transaction.transactionId}:`, commissionErr);
+          throw commissionErr;
+        }
       }
     } catch (error) {
       console.error('Error in processCommissionsAsync:', error);
@@ -854,15 +1151,7 @@ export const transactionService = {
         ],
       },
       include: {
-        initiator: {
-          include: {
-            schema: {
-              include: {
-                pgRates: true,
-              },
-            },
-          },
-        },
+        initiator: true,
         paymentGateway: true,
       },
     });
@@ -933,9 +1222,9 @@ export const transactionService = {
     
     // Handle wallet operations based on transaction type
     if (transaction.type === 'PAYIN') {
-      // Credit the net amount to the initiator's wallet
+      // Credit the net amount (after PG charges) to the initiator's wallet as CREDIT, not COMMISSION
       try {
-        await walletService.creditCommission(
+        await walletService.creditPayinNet(
           transaction.initiatorId,
           Number(transaction.netAmount),
           transaction.id,

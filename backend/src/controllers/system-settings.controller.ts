@@ -1,7 +1,13 @@
-
 import { Request, Response, NextFunction } from 'express';
 import prisma from '../lib/prisma';
 import { AppError } from '../middleware/errorHandler';
+
+// Default payout slabs when none configured (0-50k = ₹10 as per applicable PG)
+const DEFAULT_PAYOUT_SLABS = [
+  { minAmount: 0, maxAmount: 50000, flatCharge: 10 },
+  { minAmount: 50001, maxAmount: 200000, flatCharge: 18 },
+  { minAmount: 200001, maxAmount: null, flatCharge: 25 },
+];
 
 export const systemSettingsController = {
   /**
@@ -17,9 +23,12 @@ export const systemSettingsController = {
         }
       });
 
+      const slabsRaw = JSON.parse(settings.find(s => s.key === 'GLOBAL_PAYOUT_SLABS')?.value || '[]');
+      const slabs = Array.isArray(slabsRaw) && slabsRaw.length > 0 ? slabsRaw : DEFAULT_PAYOUT_SLABS;
+
       const config = {
         activePgId: settings.find(s => s.key === 'GLOBAL_PAYOUT_PG_ID')?.value || '',
-        slabs: JSON.parse(settings.find(s => s.key === 'GLOBAL_PAYOUT_SLABS')?.value || '[]')
+        slabs
       };
 
       res.json({

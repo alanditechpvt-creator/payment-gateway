@@ -33,16 +33,9 @@ export const announcementService = {
     return prisma.announcement.create({
       data: {
         title: data.title,
-        message: data.message,
+        content: data.message ?? data.title,
         type: data.type || 'INFO',
-        priority: data.priority || 0,
         targetRoles: data.targetRoles || 'ALL',
-        targetUserIds: data.targetUserIds || null,
-        startDate: data.startDate || new Date(),
-        endDate: data.endDate || null,
-        bgColor: data.bgColor || null,
-        textColor: data.textColor || null,
-        icon: data.icon || null,
         createdById,
       },
       include: {
@@ -67,7 +60,7 @@ export const announcementService = {
     const [announcements, total] = await Promise.all([
       prisma.announcement.findMany({
         where,
-        orderBy: [{ priority: 'desc' }, { createdAt: 'desc' }],
+        orderBy: [{ createdAt: 'desc' }],
         take: limit,
         skip: offset,
         include: {
@@ -79,59 +72,29 @@ export const announcementService = {
       prisma.announcement.count({ where }),
     ]);
 
-    return { data: announcements, total, limit, offset };
+    const withMessage = announcements.map((a) => ({ ...a, message: a.content }));
+    return { data: withMessage, total, limit, offset };
   },
 
   /**
    * Get active announcements for a specific user (based on role)
    */
-  async getActiveForUser(userId: string, userRole: string) {
-    const now = new Date();
-
-    // Find announcements that:
-    // 1. Are active
-    // 2. Started (startDate <= now)
-    // 3. Haven't ended (endDate is null or > now)
-    // 4. Target this user's role OR target ALL
+  async getActiveForUser(_userId: string, userRole: string) {
     const announcements = await prisma.announcement.findMany({
-      where: {
-        isActive: true,
-        startDate: { lte: now },
-        OR: [
-          { endDate: null },
-          { endDate: { gt: now } },
-        ],
-      },
-      orderBy: [{ priority: 'desc' }, { createdAt: 'desc' }],
+      where: { isActive: true },
+      orderBy: [{ createdAt: 'desc' }],
     });
 
-    // Filter by role
+    // Filter by targetRoles (ALL or user's role)
     const filtered = announcements.filter((a) => {
-      const roles = a.targetRoles.split(',').map(r => r.trim());
-      
-      // Check if targets ALL or specific role
+      const roles = (a.targetRoles || 'ALL').split(',').map((r: string) => r.trim()).filter(Boolean);
       if (roles.includes('ALL')) return true;
       if (roles.includes(userRole)) return true;
-      
-      // Check if user is specifically targeted
-      if (a.targetUserIds) {
-        const targetIds = a.targetUserIds.split(',').map(id => id.trim());
-        if (targetIds.includes(userId)) return true;
-      }
-      
       return false;
     });
 
-    // Increment view count for all returned announcements (async, don't wait)
-    const announcementIds = filtered.map(a => a.id);
-    if (announcementIds.length > 0) {
-      prisma.announcement.updateMany({
-        where: { id: { in: announcementIds } },
-        data: { viewCount: { increment: 1 } },
-      }).catch(() => {}); // Ignore errors
-    }
-
-    return filtered;
+    // Expose content as message for API compatibility
+    return filtered.map((a) => ({ ...a, message: a.content }));
   },
 
   /**
@@ -151,7 +114,7 @@ export const announcementService = {
       throw new AppError('Announcement not found', 404);
     }
 
-    return announcement;
+    return { ...announcement, message: announcement.content };
   },
 
   /**
@@ -160,22 +123,16 @@ export const announcementService = {
   async update(id: string, data: UpdateAnnouncementData) {
     await this.getById(id); // Check exists
 
+    const updateData: { title?: string; content?: string; type?: string; targetRoles?: string; isActive?: boolean } = {};
+    if (data.title !== undefined) updateData.title = data.title;
+    if (data.message !== undefined) updateData.content = data.message;
+    if (data.type !== undefined) updateData.type = data.type;
+    if (data.targetRoles !== undefined) updateData.targetRoles = data.targetRoles;
+    if (data.isActive !== undefined) updateData.isActive = data.isActive;
+
     return prisma.announcement.update({
       where: { id },
-      data: {
-        title: data.title,
-        message: data.message,
-        type: data.type,
-        priority: data.priority,
-        targetRoles: data.targetRoles,
-        targetUserIds: data.targetUserIds,
-        startDate: data.startDate,
-        endDate: data.endDate,
-        bgColor: data.bgColor,
-        textColor: data.textColor,
-        icon: data.icon,
-        isActive: data.isActive,
-      },
+      data: updateData,
       include: {
         createdBy: {
           select: { id: true, email: true, firstName: true, lastName: true },

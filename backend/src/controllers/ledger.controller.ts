@@ -62,6 +62,25 @@ export const ledgerController = {
     }
   },
   
+  // Export global ledger (admin only)
+  async exportGlobalLedger(req: AuthRequest, res: Response, next: NextFunction) {
+    try {
+      const params = {
+        format: (req.query.format as 'json' | 'csv') || 'csv',
+        startDate: req.query.startDate ? new Date(req.query.startDate as string) : undefined,
+        endDate: req.query.endDate ? new Date(req.query.endDate as string) : undefined,
+        type: req.query.type as string,
+        userId: req.query.userId as string,
+      };
+      const result = await ledgerService.exportGlobalLedger(params);
+      res.setHeader('Content-Type', result.contentType);
+      res.setHeader('Content-Disposition', `attachment; filename="${result.filename}"`);
+      res.send(result.content);
+    } catch (error) {
+      next(error);
+    }
+  },
+
   // Export ledger
   async exportLedger(req: AuthRequest, res: Response, next: NextFunction) {
     try {

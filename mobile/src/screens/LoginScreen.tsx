@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   View,
   Text,
@@ -12,6 +12,8 @@ import {
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
+import * as LocalAuthentication from 'expo-local-authentication';
+import * as SecureStore from 'expo-secure-store';
 import { authApi } from '../api';
 import { useAuthStore } from '../store/auth';
 
@@ -21,6 +23,57 @@ export default function LoginScreen() {
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const [mpin, setMpin] = useState('');
+  const [biometricEnabled, setBiometricEnabled] = useState(false);
+  const [bootstrapped, setBootstrapped] = useState(false);
+  const [forcePassword, setForcePassword] = useState(false);
+
+  // Decide which mode to show: full credentials vs quick login only
+  useEffect(() => {
+    (async () => {
+      try {
+        const enabled = await SecureStore.getItemAsync('biometricEnabled');
+        setBiometricEnabled(enabled === 'true');
+      } catch {
+        setBiometricEnabled(false);
+      } finally {
+        setBootstrapped(true);
+      }
+    })();
+  }, []);
+
+  const quickLoginWithRefresh = async () => {
+    try {
+      const storedRefresh = await SecureStore.getItemAsync('refreshToken');
+      const userString = await SecureStore.getItemAsync('user');
+      if (!storedRefresh || !userString) {
+        Alert.alert('Session expired', 'Quick login is not available. Please sign in once with email & password.');
+        // Immediately show the email/password form so user can continue
+        setForcePassword(true);
+        return;
+      }
+      setIsLoading(true);
+      const resp = await authApi.refreshToken(storedRefresh);
+      const { accessToken, refreshToken } = resp.data.data;
+      const user = JSON.parse(userString);
+      await setAuth(user, accessToken, refreshToken);
+    } catch (e: any) {
+      // If the refresh token is invalid/expired, clear quick-login data so the user can log in cleanly.
+      if (e.response?.data?.error === 'Invalid or expired refresh token' || e.response?.status === 401) {
+        await SecureStore.deleteItemAsync('refreshToken');
+        await SecureStore.deleteItemAsync('user');
+        await SecureStore.deleteItemAsync('mpin');
+        await SecureStore.deleteItemAsync('biometricEnabled');
+        Alert.alert('Session expired', 'Please sign in with email & password to continue.');
+      } else {
+        Alert.alert('Error', e.response?.data?.error || 'Quick login failed. Please sign in with password.');
+      }
+      // If quick login fails, show the email/password form so the user isn't stuck
+      setForcePassword(true);
+    } finally {
+      setIsLoading(false);
+    }
+  };
   
   const handleLogin = async () => {
     if (!email || !password) {
@@ -48,6 +101,23 @@ export default function LoginScreen() {
     }
   };
   
+  if (!bootstrapped) {
+    return (
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        style={styles.container}
+      >
+        <View style={styles.content}>
+          <ActivityIndicator color="#fff" />
+        </View>
+      </KeyboardAvoidingView>
+    );
+  }
+
+  // Once biometric is enabled, default to quick login (MPIN / biometric),
+  // but allow user to force showing the password form.
+  const quickOnly = biometricEnabled === true && !forcePassword;
+
   return (
     <KeyboardAvoidingView
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
@@ -67,63 +137,182 @@ export default function LoginScreen() {
         
         {/* Title */}
         <Text style={styles.title}>Welcome back</Text>
-        <Text style={styles.subtitle}>Sign in to your account</Text>
+        <Text style={styles.subtitle}>
+          {quickOnly ? 'Use MPIN or biometric to login' : 'Sign in to your account'}
+        </Text>
         
-        {/* Form */}
         <View style={styles.form}>
-          <View style={styles.inputContainer}>
-            <Ionicons name="mail-outline" size={20} color="#71717a" style={styles.inputIcon} />
-            <TextInput
-              style={styles.input}
-              placeholder="Email address"
-              placeholderTextColor="#71717a"
-              value={email}
-              onChangeText={setEmail}
-              keyboardType="email-address"
-              autoCapitalize="none"
-            />
-          </View>
-          
-          <View style={styles.inputContainer}>
-            <Ionicons name="lock-closed-outline" size={20} color="#71717a" style={styles.inputIcon} />
-            <TextInput
-              style={styles.input}
-              placeholder="Password"
-              placeholderTextColor="#71717a"
-              value={password}
-              onChangeText={setPassword}
-              secureTextEntry={!showPassword}
-            />
-            <TouchableOpacity onPress={() => setShowPassword(!showPassword)}>
-              <Ionicons
-                name={showPassword ? 'eye-off-outline' : 'eye-outline'}
-                size={20}
-                color="#71717a"
+          {!quickOnly && (
+            <>
+              <View style={styles.inputContainer}>
+                <Ionicons name="mail-outline" size={20} color="#71717a" style={styles.inputIcon} />
+                <TextInput
+                  style={styles.input}
+                  placeholder="Email address"
+                  placeholderTextColor="#71717a"
+                  value={email}
+                  onChangeText={setEmail}
+                  keyboardType="email-address"
+                  autoCapitalize="none"
+                />
+              </View>
+              
+              <View style={styles.inputContainer}>
+                <Ionicons name="lock-closed-outline" size={20} color="#71717a" style={styles.inputIcon} />
+                <TextInput
+                  style={styles.input}
+                  placeholder="Password"
+                  placeholderTextColor="#71717a"
+                  value={password}
+                  onChangeText={setPassword}
+                  secureTextEntry={!showPassword}
+                />
+                <TouchableOpacity onPress={() => setShowPassword(!showPassword)}>
+                  <Ionicons
+                    name={showPassword ? 'eye-off-outline' : 'eye-outline'}
+                    size={20}
+                    color="#71717a"
+                  />
+                </TouchableOpacity>
+              </View>
+              
+              <TouchableOpacity style={styles.forgotPassword}>
+                <Text style={styles.forgotPasswordText}>Forgot password?</Text>
+              </TouchableOpacity>
+              
+              <TouchableOpacity onPress={handleLogin} disabled={isLoading}>
+                <LinearGradient
+                  colors={['#6366f1', '#d946ef']}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 0 }}
+                  style={styles.button}
+                >
+                  {isLoading ? (
+                    <ActivityIndicator color="#fff" />
+                  ) : (
+                    <>
+                      <Text style={styles.buttonText}>Sign In</Text>
+                      <Ionicons name="arrow-forward" size={20} color="#fff" />
+                    </>
+                  )}
+                </LinearGradient>
+              </TouchableOpacity>
+            </>
+          )}
+
+          {/* Quick login options (shown always; when biometric is enabled, this is the default mode) */}
+          <View style={{ marginTop: 24, gap: 12 }}>
+            <Text style={{ color: '#71717a', fontSize: 13, marginBottom: 4 }}>Or use quick login</Text>
+            <View style={styles.inputContainer}>
+              <Ionicons name="key-outline" size={20} color="#71717a" style={styles.inputIcon} />
+              <TextInput
+                style={styles.input}
+                placeholder="MPIN (if configured in Settings)"
+                placeholderTextColor="#71717a"
+                keyboardType="number-pad"
+                maxLength={6}
+                secureTextEntry
+                value={mpin}
+                onChangeText={setMpin}
               />
-            </TouchableOpacity>
-          </View>
-          
-          <TouchableOpacity style={styles.forgotPassword}>
-            <Text style={styles.forgotPasswordText}>Forgot password?</Text>
-          </TouchableOpacity>
-          
-          <TouchableOpacity onPress={handleLogin} disabled={isLoading}>
-            <LinearGradient
-              colors={['#6366f1', '#d946ef']}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 0 }}
-              style={styles.button}
+            </View>
+            <TouchableOpacity
+              style={[
+                styles.button,
+                {
+                  backgroundColor: 'transparent',
+                  borderWidth: 1,
+                  borderColor: 'rgba(99,102,241,0.6)',
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: 8,
+                },
+              ]}
+              onPress={async () => {
+                const stored = await SecureStore.getItemAsync('mpin');
+                if (!stored) {
+                  Alert.alert('Error', 'MPIN not set. Please configure it in Settings.');
+                  return;
+                }
+                if (!mpin) {
+                  Alert.alert('Error', 'Enter your MPIN');
+                  return;
+                }
+                if (stored !== mpin) {
+                  Alert.alert('Error', 'Incorrect MPIN');
+                  return;
+                }
+                await quickLoginWithRefresh();
+              }}
+              disabled={isLoading}
             >
-              {isLoading ? (
-                <ActivityIndicator color="#fff" />
-              ) : (
-                <>
-                  <Text style={styles.buttonText}>Sign In</Text>
-                  <Ionicons name="arrow-forward" size={20} color="#fff" />
-                </>
-              )}
-            </LinearGradient>
-          </TouchableOpacity>
+              <Ionicons name="key-outline" size={18} color="#6366f1" />
+              <Text style={{ color: '#e5e7eb', fontWeight: '600' }}>Login with MPIN</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[
+                styles.button,
+                {
+                  backgroundColor: 'transparent',
+                  borderWidth: 1,
+                  borderColor: 'rgba(99,102,241,0.6)',
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: 8,
+                },
+              ]}
+              onPress={async () => {
+                try {
+                  const enabled = await SecureStore.getItemAsync('biometricEnabled');
+                  if (enabled !== 'true') {
+                    Alert.alert('Error', 'Biometric login not enabled. Turn it on in Settings.');
+                    return;
+                  }
+                  const hasHardware = await LocalAuthentication.hasHardwareAsync();
+                  const enrolled = await LocalAuthentication.isEnrolledAsync();
+                  if (!hasHardware || !enrolled) {
+                    Alert.alert('Error', 'Biometric authentication not available on this device.');
+                    return;
+                  }
+                  const res = await LocalAuthentication.authenticateAsync({
+                    promptMessage: 'Login with Face/Touch ID',
+                    fallbackLabel: 'Use password',
+                  });
+                  if (res.success) {
+                    await quickLoginWithRefresh();
+                  }
+                } catch (e: any) {
+                  Alert.alert('Error', e.message || 'Biometric login failed');
+                }
+              }}
+              disabled={isLoading}
+            >
+              <Ionicons name="finger-print-outline" size={18} color="#6366f1" />
+              <Text style={{ color: '#e5e7eb', fontWeight: '600' }}>Login with Face/Touch ID</Text>
+            </TouchableOpacity>
+            {quickOnly && (
+              <TouchableOpacity
+                style={{ marginTop: 8, alignItems: 'center' }}
+                onPress={() => setForcePassword(true)}
+              >
+                <Text style={{ color: '#a5b4fc', fontSize: 13 }}>
+                  Trouble with quick login? Use password instead
+                </Text>
+              </TouchableOpacity>
+            )}
+            {!quickOnly && biometricEnabled && (
+              <TouchableOpacity
+                style={{ marginTop: 8, alignItems: 'center' }}
+                onPress={() => setForcePassword(false)}
+              >
+                <Text style={{ color: '#a5b4fc', fontSize: 13 }}>
+                  Use quick login (MPIN / biometric) instead
+                </Text>
+              </TouchableOpacity>
+            )}
+          </View>
         </View>
       </View>
     </KeyboardAvoidingView>

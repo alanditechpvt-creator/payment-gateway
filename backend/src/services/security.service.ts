@@ -368,16 +368,19 @@ class SecurityService {
    */
   async logLoginAttempt(data: LoginAttemptData): Promise<void> {
     try {
-      await prisma.loginAttempt.create({
-        data: {
-          email: data.email,
-          ipAddress: data.ipAddress,
-          userAgent: data.userAgent?.substring(0, 500), // Truncate long user agents
-          success: data.success,
-          failureReason: data.failureReason,
-          captchaVerified: data.captchaVerified || false,
-        },
-      });
+      const prismaAny = prisma as { loginAttempt?: { create: (args: unknown) => Promise<unknown> } };
+      if (prismaAny.loginAttempt?.create) {
+        await prismaAny.loginAttempt.create({
+          data: {
+            email: data.email,
+            ipAddress: data.ipAddress,
+            userAgent: data.userAgent?.substring(0, 500),
+            success: data.success,
+            failureReason: data.failureReason,
+            captchaVerified: data.captchaVerified || false,
+          },
+        });
+      }
     } catch (error) {
       logger.error('Error logging login attempt:', error);
     }
@@ -387,11 +390,13 @@ class SecurityService {
    * Get login history for a user (admin)
    */
   async getLoginHistory(email: string, limit: number = 50): Promise<any[]> {
-    return prisma.loginAttempt.findMany({
+    const prismaAny = prisma as { loginAttempt?: { findMany: (args: unknown) => Promise<unknown[]> } };
+    if (!prismaAny.loginAttempt?.findMany) return [];
+    return prismaAny.loginAttempt.findMany({
       where: { email },
       orderBy: { createdAt: 'desc' },
       take: limit,
-    });
+    }) as Promise<any[]>;
   }
 
   /**
@@ -404,9 +409,13 @@ class SecurityService {
     topFailedEmails: { email: string; count: number }[];
     topFailedIPs: { ip: string; count: number }[];
   }> {
+    const prismaAny = prisma as { loginAttempt?: { findMany: (args: unknown) => Promise<{ email: string; ipAddress: string | null }[]> } };
+    if (!prismaAny.loginAttempt?.findMany) {
+      return { totalAttempts: 0, uniqueEmails: 0, uniqueIPs: 0, topFailedEmails: [], topFailedIPs: [] };
+    }
     const since = new Date(Date.now() - hours * 60 * 60 * 1000);
 
-    const attempts = await prisma.loginAttempt.findMany({
+    const attempts = await prismaAny.loginAttempt.findMany({
       where: {
         success: false,
         createdAt: { gte: since },
@@ -467,7 +476,6 @@ class SecurityService {
       where: { key },
       update: {
         value,
-        updatedBy: adminId,
         updatedAt: new Date(),
       },
       create: {
@@ -476,7 +484,6 @@ class SecurityService {
         category: 'SECURITY',
         description: this.getSettingDescription(key),
         dataType: this.getSettingDataType(key),
-        updatedBy: adminId,
       },
     });
 

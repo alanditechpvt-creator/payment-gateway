@@ -133,6 +133,8 @@ export const userApi = {
     api.post(`/users/${userId}/pg`, { pgId, customRate }),
   removePGAssignment: (userId: string, pgId: string) =>
     api.delete(`/users/${userId}/pg/${pgId}`),
+  resendOnboardingEmail: (userId: string) =>
+    api.post(`/users/${userId}/resend-onboarding`),
 };
 
 // Wallet API
@@ -186,6 +188,30 @@ export const bbpsApi = {
   payBill: (data: any) => api.post('/bbps/pay', data),
 };
 
+// Security API (admin)
+export const securityApi = {
+  // Get current security settings (max attempts, lockout duration, CAPTCHA, etc.)
+  getSettings: () => api.get('/security/settings'),
+  // Bulk update multiple settings in one go (requires confirmPassword in body)
+  bulkUpdateSettings: (
+    settings: Array<{ key: string; value: string | number | boolean }>,
+    confirmPassword: string
+  ) =>
+    api.put('/security/settings', {
+      settings: settings.map((s) => ({ key: s.key, value: String(s.value) })),
+      confirmPassword,
+    }),
+  // Unlock a locked user account by email (requires confirmPassword)
+  unlockAccount: (email: string, confirmPassword: string) =>
+    api.post(`/security/unlock/${encodeURIComponent(email)}`, { confirmPassword }),
+  // Read-only login history for a given email
+  getLoginHistory: (email: string, limit: number = 50) =>
+    api.get(`/security/login-history/${encodeURIComponent(email)}`, { params: { limit } }),
+  // Aggregate failed login stats over the last N hours
+  getFailedLoginStats: (hours: number = 24) =>
+    api.get('/security/failed-login-stats', { params: { hours } }),
+};
+
 // Payment Gateway API
 export const pgApi = {
   getPGs: (params?: any) => api.get('/pg', { params }),
@@ -212,6 +238,16 @@ export const onboardingApi = {
     axios.post(`${API_URL}/users/onboarding/${token}/send-otp`),
   verifyEmailOTP: (token: string, otp: string) =>
     axios.post(`${API_URL}/users/onboarding/${token}/verify-otp`, { otp }),
+};
+
+// Payout Profile API (group beneficiaries by mobile; max 3 profiles per user)
+export const payoutProfileApi = {
+  list: () => api.get('/payout-profiles'),
+  getByMobile: (mobile: string) => api.get(`/payout-profiles/by-mobile/${encodeURIComponent(mobile)}`),
+  getById: (profileId: string) => api.get(`/payout-profiles/${profileId}`),
+  create: (data: { mobile: string; name: string; email?: string }) => api.post('/payout-profiles', data),
+  update: (profileId: string, data: any) => api.patch(`/payout-profiles/${profileId}`, data),
+  delete: (profileId: string) => api.delete(`/payout-profiles/${profileId}`),
 };
 
 // Beneficiary API
@@ -241,21 +277,29 @@ export const schemaApi = {
     api.delete(`/schemas/${schemaId}/rates/${pgId}`),
   assignToUser: (schemaId: string, userId: string) =>
     api.post(`/schemas/${schemaId}/assign/${userId}`),
+  // Schema payin rates (per-channel) for (i) info modal
+  getSchemaPayinRates: (schemaId: string) =>
+    api.get(`/schemas/${schemaId}/payin-rates`),
 };
 
 // Rate Assignment API (Hierarchical commission system)
 export const rateApi = {
   // Get my rates (what I'm charged for each PG)
   getMyRates: () => api.get('/rates/my-rates'),
+  // Get my payin rates by PG and channel (schema-based; for (i) info modal)
+  getMyPayinRates: () => api.get('/rates/my-payin-rates'),
   // Get my base rate for a specific PG
   getMyBaseRate: (pgId: string) => api.get(`/rates/my-base-rate/${pgId}`),
   // Get available PGs for rate assignment (with min assignable rates)
   getAvailablePGsForAssignment: () => api.get('/rates/available-pgs'),
   // Get children with their rates
   getChildrenRates: (pgId?: string) => api.get('/rates/children', { params: { pgId } }),
-  // Assign rate to a child
-  assignRate: (targetUserId: string, pgId: string, payinRate: number, payoutRate: number) =>
-    api.post('/rates/assign', { targetUserId, pgId, payinRate, payoutRate }),
+  // Commission stats (earned by me, day/month, from downline)
+  getCommissionStats: (params?: { startDate?: string; endDate?: string; groupBy?: 'day' | 'month' }) =>
+    api.get('/rates/commission-stats', { params }),
+  // Assign rate to a child (omit payinRate/payoutRate for schema-based assignment when allowed by backend)
+  assignRate: (targetUserId: string, pgId: string, payinRate?: number, payoutRate?: number) =>
+    api.post('/rates/assign', { targetUserId, pgId, ...(payinRate != null && { payinRate }), ...(payoutRate != null && { payoutRate }) }),
   // Bulk assign rates
   bulkAssignRates: (assignments: Array<{ targetUserId: string; pgId: string; payinRate: number; payoutRate: number }>) =>
     api.post('/rates/bulk-assign', { assignments }),

@@ -1,10 +1,10 @@
 'use client';
 
-import { useState, useEffect, Suspense } from 'react';
+import { useState, useEffect, useMemo, Suspense } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { motion } from 'framer-motion';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { pgApi, transactionApi, beneficiaryApi, configApi, systemSettingsApi } from '@/lib/api';
+import { pgApi, rateApi, transactionApi, beneficiaryApi, payoutProfileApi, configApi, systemSettingsApi, walletApi } from '@/lib/api';
 import { useAuthStore } from '@/lib/store';
 import toast from 'react-hot-toast';
 import RazorpayCheckout from '@/components/RazorpayCheckout';
@@ -21,8 +21,36 @@ import {
   BanknotesIcon,
   BuildingLibraryIcon,
   ExclamationCircleIcon,
-  TableCellsIcon,
+  InformationCircleIcon,
+  XMarkIcon,
+  WalletIcon,
+  MagnifyingGlassIcon,
+  ChevronLeftIcon,
+  ChevronRightIcon,
 } from '@heroicons/react/24/outline';
+
+const BENEFICIARY_PAGE_SIZE = 8;
+const DEFAULT_PAYOUT_SLABS = [
+  { minAmount: 0, maxAmount: 50000, flatCharge: 10 },
+  { minAmount: 50001, maxAmount: 200000, flatCharge: 18 },
+  { minAmount: 200001, maxAmount: null, flatCharge: 25 },
+];
+
+function getPayoutCharge(amount: number, config: any): { charges: number; totalDeduction: number } {
+  const slabs = (Array.isArray(config?.slabs) && config.slabs.length > 0) ? config.slabs : DEFAULT_PAYOUT_SLABS;
+  const chargeType = (config?.payoutChargeType || 'SLAB') as 'SLAB' | 'PERCENTAGE';
+  let charges = 0;
+  if (chargeType === 'PERCENTAGE') {
+    const rate = config?.payoutRate ?? 0;
+    charges = amount * rate;
+  } else {
+    const applicableSlab = slabs.find((s: any) =>
+      amount >= s.minAmount && (s.maxAmount == null || amount <= s.maxAmount)
+    );
+    charges = applicableSlab?.flatCharge ?? slabs[0]?.flatCharge ?? 10;
+  }
+  return { charges, totalDeduction: amount + charges };
+}
 
 // Payout Charges Breakdown Component with Slab Support
 function PayoutChargesBreakdown({ amount, pgId }: { amount: number; pgId: string }) {
@@ -32,7 +60,13 @@ function PayoutChargesBreakdown({ amount, pgId }: { amount: number; pgId: string
   });
 
   const config = configData?.data?.data;
-  const slabs = config?.slabs || [];
+  // Use configured slabs or default (0-50k = ₹10 as per applicable PG)
+  const defaultSlabs = [
+    { minAmount: 0, maxAmount: 50000, flatCharge: 10 },
+    { minAmount: 50001, maxAmount: 200000, flatCharge: 18 },
+    { minAmount: 200001, maxAmount: null, flatCharge: 25 },
+  ];
+  const slabs = (Array.isArray(config?.slabs) && config.slabs.length > 0) ? config.slabs : defaultSlabs;
   const chargeType = (config?.payoutChargeType || 'SLAB') as 'SLAB' | 'PERCENTAGE';
 
   // Find applicable slab
@@ -40,23 +74,16 @@ function PayoutChargesBreakdown({ amount, pgId }: { amount: number; pgId: string
     amount >= slab.minAmount && (slab.maxAmount === null || amount <= slab.maxAmount)
   );
 
-  // Calculate charges
+  // Calculate charges (slabs applied in backend; no need to show ranges to user)
   let charges = 0;
-  let slabLabel = '';
-  
   if (chargeType === 'PERCENTAGE') {
     const rate = config?.payoutRate || 0;
     charges = amount * rate;
-    slabLabel = `${(rate * 100).toFixed(2)}%`;
   } else if (applicableSlab) {
     charges = applicableSlab.flatCharge;
-    slabLabel = applicableSlab.maxAmount 
-      ? `₹${applicableSlab.minAmount.toLocaleString()} - ₹${applicableSlab.maxAmount.toLocaleString()}`
-      : `Above ₹${applicableSlab.minAmount.toLocaleString()}`;
   } else {
-    // Default fallback
-    charges = 25;
-    slabLabel = 'Default';
+    const fallback = slabs[0];
+    charges = fallback?.flatCharge ?? 10;
   }
 
   const totalDeduction = amount + charges;
@@ -78,56 +105,13 @@ function PayoutChargesBreakdown({ amount, pgId }: { amount: number; pgId: string
       animate={{ opacity: 1, height: 'auto' }}
       className="p-4 bg-violet-500/10 border border-violet-500/20 rounded-xl"
     >
-      <h4 className="text-sm font-medium text-violet-400 mb-3 flex items-center gap-2">
-        <TableCellsIcon className="w-4 h-4" />
-        Payout Charges (Slab-Based)
-      </h4>
-      
-      {/* Slab Table */}
-      <div className="mb-4 overflow-hidden rounded-lg border border-white/10">
-        <table className="w-full text-xs">
-          <thead>
-            <tr className="bg-white/5">
-              <th className="px-3 py-2 text-left text-white/50 font-medium">Amount Range</th>
-              <th className="px-3 py-2 text-right text-white/50 font-medium">Charge</th>
-            </tr>
-          </thead>
-          <tbody>
-            {slabs.map((slab: any, index: number) => {
-              const isActive = applicableSlab?.id === slab.id || 
-                (applicableSlab?.minAmount === slab.minAmount && applicableSlab?.flatCharge === slab.flatCharge);
-              return (
-                <tr 
-                  key={slab.id || index} 
-                  className={`border-t border-white/5 ${isActive ? 'bg-violet-500/20' : ''}`}
-                >
-                  <td className="px-3 py-2">
-                    {slab.maxAmount 
-                      ? `₹${slab.minAmount.toLocaleString()} - ₹${slab.maxAmount.toLocaleString()}`
-                      : `Above ₹${slab.minAmount.toLocaleString()}`
-                    }
-                    {isActive && <span className="ml-2 text-violet-400">←</span>}
-                  </td>
-                  <td className="px-3 py-2 text-right font-mono">
-                    ₹{slab.flatCharge}
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
-      
-      {/* Calculation */}
       <div className="space-y-2 text-sm">
         <div className="flex justify-between">
           <span className="text-white/60">Payout Amount:</span>
           <span>₹{amount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
         </div>
         <div className="flex justify-between">
-          <span className="text-white/60">
-            Charges ({slabLabel}):
-          </span>
+          <span className="text-white/60">Charges:</span>
           <span className="text-amber-400">+ ₹{charges.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
         </div>
         <div className="border-t border-white/10 pt-2 mt-2">
@@ -137,7 +121,7 @@ function PayoutChargesBreakdown({ amount, pgId }: { amount: number; pgId: string
           </div>
         </div>
         <p className="text-xs text-white/40 mt-2">
-          ₹{amount.toLocaleString('en-IN')} will be sent to beneficiary. ₹{charges.toLocaleString('en-IN', { minimumFractionDigits: 2 })} is the flat service charge for this slab.
+          ₹{amount.toLocaleString('en-IN')} will be sent to beneficiary.
         </p>
       </div>
     </motion.div>
@@ -170,6 +154,11 @@ function NewTransactionContent() {
   const [pgMode, setPgMode] = useState<'ONLINE' | 'OFFLINE'>('OFFLINE');
   const [isCheckingStatus, setIsCheckingStatus] = useState(false);
   
+  // Payout profile flow: enter mobile -> load or create profile -> show beneficiaries under that profile
+  const [profileMobile, setProfileMobile] = useState('');
+  const [currentProfile, setCurrentProfile] = useState<any>(null);
+  const [showCreateProfileForm, setShowCreateProfileForm] = useState(false);
+  const [newProfile, setNewProfile] = useState({ name: '', email: '' });
   // Beneficiary states
   const [selectedBeneficiary, setSelectedBeneficiary] = useState<string>('');
   const [showAddBeneficiary, setShowAddBeneficiary] = useState(false);
@@ -185,6 +174,35 @@ function NewTransactionContent() {
   const [isLookingUpIfsc, setIsLookingUpIfsc] = useState(false);
   const [ifscDetails, setIfscDetails] = useState<any>(null);
   const [beneficiaryErrors, setBeneficiaryErrors] = useState<Record<string, string>>({});
+  const [beneficiarySearch, setBeneficiarySearch] = useState('');
+  const [beneficiaryPage, setBeneficiaryPage] = useState(1);
+
+  // Optional browser location for payin/payout
+  const [location, setLocation] = useState<{ latitude: number; longitude: number; accuracy?: number } | null>(null);
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || !('geolocation' in navigator)) return;
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        setLocation({
+          latitude: pos.coords.latitude,
+          longitude: pos.coords.longitude,
+          accuracy: pos.coords.accuracy,
+        });
+      },
+      () => {
+        // Non-blocking: user may deny; we just won't send location
+        toast.info('Location access is disabled. Enable it to store transaction location.', { duration: 4000 });
+      },
+      { enableHighAccuracy: true, timeout: 10000 }
+    );
+  }, []);
+
+  // Payin rates (i) modal – schema-based rates per channel (per PG)
+  const [showRatesModal, setShowRatesModal] = useState(false);
+  const [ratesModalPGCode, setRatesModalPGCode] = useState<string | null>(null); // which PG's rates to show (null = all)
+  const [ratesModalData, setRatesModalData] = useState<Record<string, { paymentGateway?: { code: string }; rates: { channelName: string; channelCode: string; rateDisplay: string }[] }> | null>(null);
+  const [loadingRatesModal, setLoadingRatesModal] = useState(false);
 
   // Fetch PG Mode configuration
   const { data: pgModeData } = useQuery({
@@ -208,12 +226,20 @@ function NewTransactionContent() {
     retry: false,
   });
 
-  // Fetch beneficiaries for payout
+  // Fetch beneficiaries for payout (when no profile selected, fallback list)
   const { data: beneficiariesData, isLoading: loadingBeneficiaries } = useQuery({
-    queryKey: ['beneficiaries'],
-    queryFn: () => beneficiaryApi.getBeneficiaries({ isActive: true }),
-    enabled: isAuthenticated && transactionType === 'PAYOUT',
+    queryKey: ['beneficiaries', currentProfile?.id],
+    queryFn: () => beneficiaryApi.getBeneficiaries({ isActive: true, profileId: currentProfile?.id }),
+    enabled: isAuthenticated && transactionType === 'PAYOUT' && !!currentProfile?.id,
   });
+  // Refetch current profile (e.g. after adding beneficiary)
+  const { data: profileData, refetch: refetchCurrentProfile, isLoading: loadingProfile } = useQuery({
+    queryKey: ['payout-profile', currentProfile?.id],
+    queryFn: () => payoutProfileApi.getById(currentProfile!.id),
+    enabled: isAuthenticated && transactionType === 'PAYOUT' && !!currentProfile?.id,
+  });
+  const profileWithBeneficiaries = profileData?.data?.data ?? currentProfile;
+  const loadingBeneficiaryList = currentProfile ? loadingProfile : loadingBeneficiaries;
 
   // Fetch Global Payout Config for auto-selection
   const { data: globalPayoutConfig } = useQuery({
@@ -221,21 +247,71 @@ function NewTransactionContent() {
     queryFn: () => systemSettingsApi.getPayoutConfig(),
     enabled: isAuthenticated && transactionType === 'PAYOUT',
   });
+
+  // Fetch wallet balance for PAYOUT (to block if insufficient)
+  const { data: walletData } = useQuery({
+    queryKey: ['wallet'],
+    queryFn: () => walletApi.getWallet(),
+    enabled: isAuthenticated && transactionType === 'PAYOUT',
+  });
   
   const activePayoutPgId = globalPayoutConfig?.data?.data?.activePgId;
+  const walletBalance = Number(walletData?.data?.data?.balance ?? 0);
+  const payoutAmountNum = amount ? parseFloat(amount) : 0;
+  const payoutChargeResult = transactionType === 'PAYOUT' && payoutAmountNum > 0 && globalPayoutConfig?.data?.data
+    ? getPayoutCharge(payoutAmountNum, globalPayoutConfig.data.data)
+    : null;
+  const insufficientBalance = transactionType === 'PAYOUT' && payoutChargeResult != null && walletBalance < payoutChargeResult.totalDeduction;
 
   const availablePGs = pgsData?.data?.data || pgsData?.data || [];
-  const beneficiaries = beneficiariesData?.data?.data || [];
+  const beneficiaries = transactionType === 'PAYOUT' && profileWithBeneficiaries?.beneficiaries
+    ? profileWithBeneficiaries.beneficiaries
+    : (beneficiariesData?.data?.data || []);
+
+  // Beneficiary search and pagination
+  const filteredBeneficiaries = useMemo(() => {
+    if (!beneficiarySearch.trim()) return beneficiaries;
+    const q = beneficiarySearch.trim().toLowerCase();
+    return beneficiaries.filter((b: any) =>
+      (b.name && b.name.toLowerCase().includes(q)) ||
+      (b.nickName && b.nickName.toLowerCase().includes(q)) ||
+      (b.accountNumber && b.accountNumber.toString().includes(q)) ||
+      (b.bankName && b.bankName.toLowerCase().includes(q)) ||
+      (b.ifscCode && b.ifscCode.toLowerCase().includes(q))
+    );
+  }, [beneficiaries, beneficiarySearch]);
+  const totalBeneficiaryPages = Math.max(1, Math.ceil(filteredBeneficiaries.length / BENEFICIARY_PAGE_SIZE));
+  const paginatedBeneficiaries = useMemo(() => {
+    const start = (beneficiaryPage - 1) * BENEFICIARY_PAGE_SIZE;
+    return filteredBeneficiaries.slice(start, start + BENEFICIARY_PAGE_SIZE);
+  }, [filteredBeneficiaries, beneficiaryPage]);
+  useEffect(() => {
+    setBeneficiaryPage(1);
+  }, [beneficiarySearch]);
+  useEffect(() => {
+    if (beneficiaryPage > totalBeneficiaryPages) setBeneficiaryPage(1);
+  }, [beneficiaryPage, totalBeneficiaryPages]);
   
-  // Filter PGs based on transaction type - check supportedTypes string
-  const filteredPGs = Array.isArray(availablePGs) ? availablePGs.filter((pg: any) => {
-    const supportedTypes = pg.supportedTypes || 'PAYIN,PAYOUT';
-    if (transactionType === 'PAYIN') {
-      return supportedTypes.includes('PAYIN') || pg.supportsPayin;
-    } else {
+  // Filter PGs based on transaction type; for PAYOUT deduplicate by code so we show one per PG name
+  const filteredPGs = useMemo(() => {
+    if (!Array.isArray(availablePGs)) return [];
+    const filtered = availablePGs.filter((pg: any) => {
+      const supportedTypes = pg.supportedTypes || 'PAYIN,PAYOUT';
+      if (transactionType === 'PAYIN') {
+        return supportedTypes.includes('PAYIN') || pg.supportsPayin;
+      }
       return supportedTypes.includes('PAYOUT') || pg.supportsPayout;
+    });
+    if (transactionType === 'PAYOUT') {
+      const byCode = new Map<string, any>();
+      for (const pg of filtered) {
+        const code = (pg.code || pg.name || pg.id || '').toString().toLowerCase();
+        if (!byCode.has(code)) byCode.set(code, pg);
+      }
+      return Array.from(byCode.values());
     }
-  }) : [];
+    return filtered;
+  }, [availablePGs, transactionType]);
   
   // Auto-select first PG when transaction type changes
   useEffect(() => {
@@ -262,6 +338,17 @@ function NewTransactionContent() {
   
   // Get selected beneficiary details
   const selectedBeneficiaryDetails = beneficiaries.find((b: any) => b.id === selectedBeneficiary);
+
+  // Auto-load beneficiary + profile details when user selects a beneficiary (PAYOUT) — no need to ask again
+  useEffect(() => {
+    if (transactionType === 'PAYOUT' && selectedBeneficiaryDetails) {
+      setCustomerName(selectedBeneficiaryDetails.name || '');
+      if (currentProfile) {
+        setCustomerEmail(currentProfile.email || '');
+        setCustomerPhone(currentProfile.mobile || '');
+      }
+    }
+  }, [transactionType, selectedBeneficiaryDetails?.id, selectedBeneficiaryDetails?.name, currentProfile?.email, currentProfile?.mobile]);
 
   // Validation helpers
   const validateBeneficiaryForm = (): boolean => {
@@ -327,12 +414,56 @@ function NewTransactionContent() {
     return () => clearTimeout(timer);
   }, [newBeneficiary.ifscCode]);
 
-  // Add beneficiary mutation
+  // Lookup profile by mobile
+  const lookupProfileMutation = useMutation({
+    mutationFn: (mobile: string) => payoutProfileApi.getByMobile(mobile),
+    onSuccess: (res) => {
+      const profile = res.data?.data;
+      if (profile) {
+        setCurrentProfile(profile);
+        setShowCreateProfileForm(false);
+        toast.success(`Profile found: ${profile.name}`);
+      } else {
+        setShowCreateProfileForm(true);
+        setNewProfile({ name: '', email: '' });
+      }
+    },
+    onError: (err: any) => {
+      if (err.response?.status === 404 || err.response?.data?.error?.toLowerCase?.().includes('not found')) {
+        setShowCreateProfileForm(true);
+        setNewProfile({ name: '', email: '' });
+      } else {
+        toast.error(err.response?.data?.error || 'Failed to lookup profile');
+      }
+    },
+  });
+
+  // Create payout profile (max 3 per user)
+  const createProfileMutation = useMutation({
+    mutationFn: (data: { mobile: string; name: string; email?: string }) => payoutProfileApi.create(data),
+    onSuccess: async (res) => {
+      const created = res.data?.data;
+      if (created) {
+        const { data: full } = await payoutProfileApi.getById(created.id);
+        setCurrentProfile(full?.data || created);
+        setShowCreateProfileForm(false);
+        queryClient.invalidateQueries({ queryKey: ['payout-profile'] });
+        toast.success('Profile created. Add beneficiaries below.');
+      }
+    },
+    onError: (error: any) => {
+      toast.error(error.response?.data?.error || 'Failed to create profile');
+    },
+  });
+
+  // Add beneficiary mutation (with optional profileId)
   const addBeneficiaryMutation = useMutation({
     mutationFn: (data: any) => beneficiaryApi.createBeneficiary(data),
     onSuccess: (response) => {
       const newBenef = response.data.data;
       queryClient.invalidateQueries({ queryKey: ['beneficiaries'] });
+      queryClient.invalidateQueries({ queryKey: ['payout-profile', currentProfile?.id] });
+      refetchCurrentProfile();
       setSelectedBeneficiary(newBenef.id);
       setShowAddBeneficiary(false);
       setNewBeneficiary({
@@ -358,7 +489,9 @@ function NewTransactionContent() {
       toast.error('Please fix the errors in the form');
       return;
     }
-    addBeneficiaryMutation.mutate(newBeneficiary);
+    const payload: any = { ...newBeneficiary };
+    if (currentProfile?.id) payload.profileId = currentProfile.id;
+    addBeneficiaryMutation.mutate(payload);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -390,14 +523,32 @@ function NewTransactionContent() {
     setIsSubmitting(true);
 
     try {
+      // For PAYIN: customer fields optional; fallback to logged-in user if empty
+      const resolvedName =
+        customerName?.trim() ||
+        [user?.firstName, user?.lastName].filter(Boolean).join(' ').trim() ||
+        user?.email ||
+        'Guest';
+      const resolvedEmail = customerEmail?.trim() || user?.email || '';
+      const resolvedPhone = customerPhone?.trim() || user?.phone || '';
+
       const payload: any = {
         type: transactionType,
         pgId: selectedPG,
         amount: parseFloat(amount),
-        customerName,
-        customerEmail,
-        customerPhone,
+        customerName: transactionType === 'PAYIN' ? resolvedName : customerName,
+        customerEmail: transactionType === 'PAYIN' ? resolvedEmail : customerEmail,
+        customerPhone: transactionType === 'PAYIN' ? resolvedPhone : customerPhone,
       };
+
+      if (location) {
+        payload.locationLatitude = location.latitude;
+        payload.locationLongitude = location.longitude;
+        if (typeof location.accuracy === 'number') {
+          payload.locationAccuracyM = location.accuracy;
+        }
+        payload.locationSource = 'WEB';
+      }
 
       if (transactionType === 'PAYOUT') {
         if (!selectedBeneficiary) {
@@ -440,6 +591,9 @@ function NewTransactionContent() {
       }
       
       toast.success(`${transactionType} initiated successfully!`);
+      if (transactionType === 'PAYOUT') {
+        queryClient.invalidateQueries({ queryKey: ['wallet'] });
+      }
     } catch (error: any) {
       setResult({
         success: false,
@@ -519,14 +673,32 @@ function NewTransactionContent() {
 
     setIsGeneratingLink(true);
     try {
+      // For PAYIN: customer fields optional; fallback to logged-in user if empty
+      const resolvedName =
+        customerName?.trim() ||
+        [user?.firstName, user?.lastName].filter(Boolean).join(' ').trim() ||
+        user?.email ||
+        'Guest';
+      const resolvedEmail = customerEmail?.trim() || user?.email || '';
+      const resolvedPhone = customerPhone?.trim() || user?.phone || '';
+
       const payload: any = {
         pgId: selectedPG,
         amount: parseFloat(amount),
         type: transactionType,
-        customerName: customerName || undefined,
-        customerEmail: customerEmail || undefined,
-        customerPhone: customerPhone || undefined,
+        customerName: transactionType === 'PAYIN' ? resolvedName : (customerName || undefined),
+        customerEmail: transactionType === 'PAYIN' ? resolvedEmail : (customerEmail || undefined),
+        customerPhone: transactionType === 'PAYIN' ? resolvedPhone : (customerPhone || undefined),
       };
+
+      if (location) {
+        payload.locationLatitude = location.latitude;
+        payload.locationLongitude = location.longitude;
+        if (typeof location.accuracy === 'number') {
+          payload.locationAccuracyM = location.accuracy;
+        }
+        payload.locationSource = 'WEB';
+      }
 
       if (transactionType === 'PAYOUT') {
         payload.beneficiaryId = selectedBeneficiary;
@@ -703,9 +875,9 @@ function NewTransactionContent() {
                         <SabpaisaCheckout
                           transactionId={result.data.transactionId}
                           amount={result.data.amount}
-                          customerName={customerName}
-                          customerEmail={customerEmail}
-                          customerPhone={customerPhone}
+                          customerName={result.data.customerName || result.data.initiator?.firstName || customerName || 'Guest'}
+                          customerEmail={result.data.customerEmail || result.data.initiator?.email || customerEmail || ''}
+                          customerPhone={result.data.customerPhone || result.data.initiator?.phone || customerPhone || ''}
                           autoSubmit={pgMode === 'ONLINE'}
                           onSuccess={(txnId) => {
                             toast.success('Payment initiated successfully');
@@ -734,9 +906,9 @@ function NewTransactionContent() {
                         <RazorpayCheckout
                           transactionId={result.data.id}
                           amount={result.data.amount}
-                          customerName={result.data.initiator?.firstName || customerName || 'Guest'}
-                          customerEmail={result.data.initiator?.email || customerEmail || ''}
-                          customerPhone={result.data.initiator?.phone || customerPhone || ''}
+                          customerName={result.data.customerName || result.data.initiator?.firstName || customerName || 'Guest'}
+                          customerEmail={result.data.customerEmail || result.data.initiator?.email || customerEmail || ''}
+                          customerPhone={result.data.customerPhone || result.data.initiator?.phone || customerPhone || ''}
                           description={`Payin Transaction ${result.data.id}`}
                           autoOpen={true}
                           onSuccess={(paymentId, orderId) => {
@@ -942,71 +1114,459 @@ function NewTransactionContent() {
         </motion.div>
 
         <form onSubmit={handleSubmit}>
-          {/* Select Payment Gateway */}
+          {/* Select Payment Gateway — compact for PAYOUT (single PG name, small box) */}
           <motion.div
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.1 }}
-            className="glass rounded-2xl p-6 mb-6"
+            className={`glass rounded-2xl mb-6 ${transactionType === 'PAYOUT' ? 'p-2.5 mb-3' : 'p-6'}`}
           >
-            <h3 className="font-semibold mb-4 flex items-center gap-2">
-              <CreditCardIcon className="w-5 h-5 text-primary-400" />
+            <h3 className={`font-semibold flex items-center gap-2 ${transactionType === 'PAYOUT' ? 'mb-2 text-sm' : 'mb-4'}`}>
+              <CreditCardIcon className={transactionType === 'PAYOUT' ? 'w-4 h-4' : 'w-5 h-5'} />
               Select Payment Gateway
             </h3>
             
             {loadingPGs ? (
-              <div className="flex items-center justify-center py-8">
+              <div className={`flex items-center justify-center ${transactionType === 'PAYOUT' ? 'py-3' : 'py-8'}`}>
                 <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-primary-500"></div>
               </div>
             ) : filteredPGs.length === 0 ? (
-              <div className="text-center py-8 text-white/50">
-                <p>No payment gateways available for {transactionType.toLowerCase()}</p>
-                <p className="text-sm mt-2">Contact your administrator to get gateways assigned.</p>
+              <div className={`text-center text-white/50 ${transactionType === 'PAYOUT' ? 'py-3 text-xs' : 'py-8'}`}>
+                <p className="text-sm">No payment gateways available for {transactionType.toLowerCase()}</p>
+                <p className="text-xs mt-1">Contact your administrator to get gateways assigned.</p>
               </div>
             ) : (
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className={`grid gap-2 ${transactionType === 'PAYOUT' ? 'grid-cols-2 sm:grid-cols-3' : 'grid-cols-1 sm:grid-cols-2 gap-4'}`}>
                 {filteredPGs.map((pg: any) => (
-                  <button
+                  <div
                     key={pg.id}
-                    type="button"
-                    onClick={() => setSelectedPG(pg.id)}
-                    className={`p-4 rounded-xl border-2 text-left transition-all ${
+                    className={`relative rounded-lg border-2 text-left transition-all ${
+                      transactionType === 'PAYOUT' ? 'p-2' : 'p-4'
+                    } ${
                       selectedPG === pg.id
                         ? 'border-primary-500 bg-primary-500/10'
                         : 'border-white/10 hover:border-white/30 bg-white/5'
                     }`}
                   >
-                    <div className="flex items-center gap-3 mb-2">
-                      <div className="w-10 h-10 rounded-lg bg-white/10 flex items-center justify-center">
-                        <CreditCardIcon className="w-5 h-5" />
-                      </div>
-                      <div>
-                        <p className="font-medium">{pg.name}</p>
-                        <p className="text-xs text-white/50">{pg.code}</p>
-                      </div>
-                    </div>
-                    <div className="flex justify-between text-sm">
-                      <span className="text-white/50">Rate:</span>
-                      <span className={transactionType === 'PAYIN' ? 'text-emerald-400' : 'text-violet-400'}>
-                        {transactionType === 'PAYIN' 
-                          ? `${pg.customPayinRate || pg.payinRate || 0}%`
-                          : `${pg.customPayoutRate || pg.payoutRate || 0}%`
-                        }
-                      </span>
-                    </div>
-                    {pg.minTransaction && (
-                      <div className="flex justify-between text-sm mt-1">
-                        <span className="text-white/50">Min:</span>
-                        <span>₹{pg.minTransaction?.toLocaleString()}</span>
-                      </div>
+                    {transactionType === 'PAYIN' && (
+                      <button
+                        type="button"
+                        onClick={async (e) => {
+                          e.stopPropagation();
+                          setRatesModalPGCode(pg.code);
+                          setShowRatesModal(true);
+                          setLoadingRatesModal(true);
+                          try {
+                            const res = await rateApi.getMyPayinRates();
+                            const data = res.data?.data?.ratesByPG ?? {};
+                            setRatesModalData(data);
+                          } catch {
+                            setRatesModalData(null);
+                            toast.error('Could not load rate details');
+                          } finally {
+                            setLoadingRatesModal(false);
+                          }
+                        }}
+                        className="absolute top-3 right-3 p-1 rounded-full hover:bg-white/10 text-white/50 hover:text-white"
+                        title={`View rate details for ${pg.name}`}
+                      >
+                        <InformationCircleIcon className="w-5 h-5" />
+                      </button>
                     )}
-                  </button>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedPG(pg.id)}
+                      className="w-full text-left"
+                    >
+                      <div className={`flex items-center gap-2 ${transactionType === 'PAYOUT' ? 'gap-2' : 'gap-3 mb-2'}`}>
+                        <div className={`rounded-lg bg-white/10 flex items-center justify-center shrink-0 ${transactionType === 'PAYOUT' ? 'w-7 h-7' : 'w-10 h-10'}`}>
+                          <CreditCardIcon className={transactionType === 'PAYOUT' ? 'w-3.5 h-3.5' : 'w-5 h-5'} />
+                        </div>
+                        <div className="min-w-0">
+                          <p className={`font-medium truncate ${transactionType === 'PAYOUT' ? 'text-sm' : ''}`}>{pg.name}</p>
+                          {transactionType === 'PAYIN' && (
+                            <p className="text-xs text-white/50">{pg.code}</p>
+                          )}
+                        </div>
+                      </div>
+                      {/* Rate row: only for PAYIN; PAYOUT uses slabs (not shown here) */}
+                      {transactionType === 'PAYIN' && (
+                        <>
+                          <div className="flex justify-between text-sm items-center mt-2">
+                            <span className="text-white/50">Rate (VISA normal):</span>
+                            <span className="text-emerald-400 font-medium">
+                              {`${pg.customPayinRate ?? pg.payinRate ?? 0}%`}
+                            </span>
+                          </div>
+                          {pg.minTransaction && (
+                            <div className="flex justify-between text-sm mt-1">
+                              <span className="text-white/50">Min:</span>
+                              <span>₹{pg.minTransaction?.toLocaleString()}</span>
+                            </div>
+                          )}
+                        </>
+                      )}
+                    </button>
+                  </div>
                 ))}
               </div>
             )}
           </motion.div>
 
-          {/* Amount & Customer Details */}
+          {/* Payin rates (i) modal – all rates as per schema */}
+          {showRatesModal && (
+            <div
+              className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50"
+              onClick={() => { setShowRatesModal(false); setRatesModalPGCode(null); }}
+            >
+              <div
+                className="bg-slate-900 rounded-2xl p-6 w-full max-w-lg max-h-[85vh] overflow-hidden border border-white/10 shadow-xl"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-lg font-semibold text-white">
+                    {ratesModalPGCode
+                      ? `Rates for ${(availablePGs as any[]).find((p: any) => p.code === ratesModalPGCode)?.name || ratesModalPGCode}`
+                      : 'Rates as per your schema'}
+                  </h3>
+                  <button
+                    type="button"
+                    onClick={() => { setShowRatesModal(false); setRatesModalPGCode(null); }}
+                    className="p-2 rounded-lg hover:bg-white/10 text-white/70"
+                  >
+                    <XMarkIcon className="w-5 h-5" />
+                  </button>
+                </div>
+                <p className="text-sm text-white/50 mb-4">
+                  Payin rates by card/channel (schema rates). Your charges are based on these.
+                </p>
+                <div className="overflow-y-auto max-h-[60vh] space-y-4">
+                  {loadingRatesModal ? (
+                    <div className="flex justify-center py-8">
+                      <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-primary-500" />
+                    </div>
+                  ) : ratesModalData && Object.keys(ratesModalData).length > 0 ? (
+                    (() => {
+                      const entries = ratesModalPGCode
+                        ? Object.entries(ratesModalData).filter(([code]) => (code || '').toLowerCase() === (ratesModalPGCode || '').toLowerCase())
+                        : Object.entries(ratesModalData);
+                      return entries.map(([pgCode, pgData]: [string, any]) => {
+                        const pgName = (availablePGs as any[]).find((p: any) => p.code === pgCode)?.name || pgCode;
+                        return (
+                      <div key={pgCode} className="bg-white/5 rounded-xl p-4 border border-white/10">
+                        <h4 className="font-medium text-white mb-2">{pgName}</h4>
+                        <div className="grid gap-1.5 text-sm">
+                          {(pgData.rates || []).map((r: any, idx: number) => (
+                            <div key={idx} className="flex justify-between text-white/80">
+                              <span>{r.channelName || r.channelCode}</span>
+                              <span className="font-mono text-emerald-400">
+                                {r.schemaRateDisplay ?? (r.schemaRate != null ? `${(Number(r.schemaRate) * 100).toFixed(2)}%` : r.rateDisplay)}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ); });
+                    })()
+                  ) : (
+                    <p className="text-white/50">No rate details available.</p>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Payout Account — above Transaction Details when PAYOUT */}
+          {transactionType === 'PAYOUT' && (
+            <>
+              {/* When profile loaded: two-column layout (main | beneficiary side panel) for better visibility and less page scroll */}
+              {currentProfile ? (
+                <div className="grid grid-cols-1 lg:grid-cols-[1fr,minmax(300px,360px)] gap-6 items-start mb-6">
+                  {/* Left: Payout Account card (profile + add beneficiary only) */}
+                  <motion.div
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: 0.15 }}
+                    className="glass rounded-2xl p-6"
+                  >
+                    <h3 className="font-semibold flex items-center gap-2 mb-4">
+                      <BuildingLibraryIcon className="w-5 h-5 text-violet-400" />
+                      Payout Account
+                    </h3>
+                    <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
+                      <div>
+                        <p className="text-white font-medium">{currentProfile.name}</p>
+                        <p className="text-sm text-white/50">Mobile: {currentProfile.mobile}</p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => { setCurrentProfile(null); setProfileMobile(''); setShowCreateProfileForm(false); setSelectedBeneficiary(''); }}
+                        className="text-sm text-violet-400 hover:text-violet-300"
+                      >
+                        Use different number
+                      </button>
+                    </div>
+                    <div className="flex items-center justify-between mb-4">
+                      <span className="text-sm text-white/70">Add beneficiary</span>
+                      <button
+                        type="button"
+                        onClick={() => setShowAddBeneficiary(!showAddBeneficiary)}
+                        className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-violet-500/20 text-violet-400 hover:bg-violet-500/30 text-sm font-medium transition-colors"
+                      >
+                        <UserPlusIcon className="w-4 h-4" />
+                        {showAddBeneficiary ? 'Cancel' : 'Add New'}
+                      </button>
+                    </div>
+                    {showAddBeneficiary && (
+                      <motion.div
+                        initial={{ opacity: 0, height: 0 }}
+                        animate={{ opacity: 1, height: 'auto' }}
+                        className="p-4 bg-white/5 rounded-xl border border-violet-500/20"
+                      >
+                        <h4 className="font-medium mb-4 text-violet-400">Add New Beneficiary</h4>
+                        <div className="space-y-4">
+                          <div className="grid grid-cols-2 gap-4">
+                            <div>
+                              <label className="block text-sm text-white/70 mb-1">Name *</label>
+                              <input
+                                type="text"
+                                value={newBeneficiary.name}
+                                onChange={(e) => { setNewBeneficiary({ ...newBeneficiary, name: e.target.value }); setBeneficiaryErrors(prev => ({ ...prev, name: '' })); }}
+                                className={`w-full px-3 py-2 bg-white/5 border rounded-lg text-white text-sm ${beneficiaryErrors.name ? 'border-red-500' : 'border-white/10'}`}
+                                placeholder="Account holder name"
+                              />
+                              {beneficiaryErrors.name && <p className="text-red-400 text-xs mt-1">{beneficiaryErrors.name}</p>}
+                            </div>
+                            <div>
+                              <label className="block text-sm text-white/70 mb-1">Nick Name</label>
+                              <input type="text" value={newBeneficiary.nickName} onChange={(e) => setNewBeneficiary({ ...newBeneficiary, nickName: e.target.value })} className="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-white text-sm" placeholder="e.g., Office Rent" />
+                            </div>
+                          </div>
+                          <div className="grid grid-cols-2 gap-4">
+                            <div>
+                              <label className="block text-sm text-white/70 mb-1">Account Number *</label>
+                              <input type="text" value={newBeneficiary.accountNumber} onChange={(e) => { setNewBeneficiary({ ...newBeneficiary, accountNumber: e.target.value.replace(/\D/g, '') }); setBeneficiaryErrors(prev => ({ ...prev, accountNumber: '' })); }} className={`w-full px-3 py-2 bg-white/5 border rounded-lg text-white font-mono text-sm ${beneficiaryErrors.accountNumber ? 'border-red-500' : 'border-white/10'}`} placeholder="1234567890" maxLength={18} />
+                              {beneficiaryErrors.accountNumber && <p className="text-red-400 text-xs mt-1">{beneficiaryErrors.accountNumber}</p>}
+                            </div>
+                            <div>
+                              <label className="block text-sm text-white/70 mb-1">IFSC Code *</label>
+                              <div className="relative">
+                                <input type="text" value={newBeneficiary.ifscCode} onChange={(e) => { setNewBeneficiary({ ...newBeneficiary, ifscCode: e.target.value.toUpperCase() }); setBeneficiaryErrors(prev => ({ ...prev, ifscCode: '' })); }} className={`w-full px-3 py-2 bg-white/5 border rounded-lg text-white font-mono text-sm uppercase ${beneficiaryErrors.ifscCode ? 'border-red-500' : ifscDetails?.valid ? 'border-emerald-500' : 'border-white/10'}`} placeholder="HDFC0001234" maxLength={11} />
+                                {isLookingUpIfsc && <div className="absolute right-2 top-1/2 -translate-y-1/2 w-4 h-4 border-2 border-violet-400/30 border-t-violet-400 rounded-full animate-spin" />}
+                                {ifscDetails?.valid && !isLookingUpIfsc && <CheckCircleIcon className="absolute right-2 top-1/2 -translate-y-1/2 w-4 h-4 text-emerald-400" />}
+                              </div>
+                              {beneficiaryErrors.ifscCode && <p className="text-red-400 text-xs mt-1">{beneficiaryErrors.ifscCode}</p>}
+                            </div>
+                          </div>
+                          {ifscDetails?.valid && (
+                            <div className="p-2 bg-emerald-500/10 rounded-lg border border-emerald-500/20">
+                              <p className="text-sm text-emerald-400 font-medium">{ifscDetails.bank}</p>
+                              {ifscDetails.branch && <p className="text-xs text-white/60">{ifscDetails.branch}, {ifscDetails.city}</p>}
+                            </div>
+                          )}
+                          <div className="grid grid-cols-2 gap-4">
+                            <div>
+                              <label className="block text-sm text-white/70 mb-1">Account Type</label>
+                              <select value={newBeneficiary.accountType} onChange={(e) => setNewBeneficiary({ ...newBeneficiary, accountType: e.target.value })} className="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-white text-sm">
+                                <option value="SAVINGS">Savings</option>
+                                <option value="CURRENT">Current</option>
+                              </select>
+                            </div>
+                            <div>
+                              <label className="block text-sm text-white/70 mb-1">Mobile Number</label>
+                              <input type="tel" value={newBeneficiary.phone} onChange={(e) => { const v = e.target.value.replace(/\D/g, '').slice(0, 10); setNewBeneficiary({ ...newBeneficiary, phone: v }); setBeneficiaryErrors(prev => ({ ...prev, phone: '' })); }} className={`w-full px-3 py-2 bg-white/5 border rounded-lg text-white text-sm ${beneficiaryErrors.phone ? 'border-red-500' : 'border-white/10'}`} placeholder="9876543210" maxLength={10} />
+                              {beneficiaryErrors.phone && <p className="text-red-400 text-xs mt-1">{beneficiaryErrors.phone}</p>}
+                            </div>
+                          </div>
+                          <button type="button" onClick={handleAddBeneficiary} disabled={addBeneficiaryMutation.isPending} className="w-full py-2.5 rounded-lg bg-violet-500 hover:bg-violet-600 text-white font-medium transition-colors disabled:opacity-50">
+                            {addBeneficiaryMutation.isPending ? 'Adding...' : 'Add Beneficiary'}
+                          </button>
+                        </div>
+                      </motion.div>
+                    )}
+                  </motion.div>
+
+                  {/* Right: Beneficiary list side panel — sticky on desktop, scrollable fixed height on mobile */}
+                  <motion.div
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: 0.2 }}
+                    className="glass rounded-2xl p-4 lg:p-5 flex flex-col lg:sticky lg:top-4 min-h-[280px] max-h-[55vh] lg:max-h-[calc(100vh-6rem)]"
+                  >
+                    <h3 className="font-semibold text-violet-400 mb-3 flex items-center gap-2 text-sm lg:text-base">
+                      <BanknotesIcon className="w-5 h-5" />
+                      Select Beneficiary
+                    </h3>
+                    {loadingBeneficiaryList ? (
+                      <div className="flex items-center justify-center flex-1 py-8">
+                        <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-violet-500" />
+                      </div>
+                    ) : beneficiaries.length === 0 ? (
+                      <div className="flex-1 flex flex-col items-center justify-center py-6 text-white/50 text-center">
+                        <BanknotesIcon className="w-10 h-10 mb-2 opacity-50" />
+                        <p className="text-sm font-medium text-white/70">No beneficiaries yet</p>
+                        <p className="text-xs mt-1">Add one using &quot;Add New&quot; on the left</p>
+                      </div>
+                    ) : (
+                      <>
+                        <div className="mb-3">
+                          <div className="relative">
+                            <MagnifyingGlassIcon className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-white/40" />
+                            <input
+                              type="text"
+                              value={beneficiarySearch}
+                              onChange={(e) => setBeneficiarySearch(e.target.value)}
+                              placeholder="Search name, bank, IFSC..."
+                              className="w-full pl-8 pr-8 py-2 bg-white/5 border border-white/10 rounded-lg text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-violet-500/50 text-sm"
+                            />
+                            {beneficiarySearch && (
+                              <button type="button" onClick={() => setBeneficiarySearch('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-white/50 hover:text-white">
+                                <XMarkIcon className="w-4 h-4" />
+                              </button>
+                            )}
+                          </div>
+                          <p className="text-xs text-white/50 mt-1">{filteredBeneficiaries.length} found</p>
+                        </div>
+                        {filteredBeneficiaries.length === 0 ? (
+                          <div className="flex-1 flex flex-col items-center justify-center py-4 text-white/50 text-center">
+                            <p className="text-sm">No match for search.</p>
+                            <button type="button" onClick={() => setBeneficiarySearch('')} className="mt-2 text-violet-400 hover:text-violet-300 text-sm">Clear</button>
+                          </div>
+                        ) : (
+                          <>
+                            <div className="flex-1 min-h-0 overflow-y-auto space-y-2 -mx-1 px-1">
+                              {paginatedBeneficiaries.map((benef: any) => (
+                                <button
+                                  key={benef.id}
+                                  type="button"
+                                  onClick={() => setSelectedBeneficiary(benef.id)}
+                                  className={`w-full p-3 rounded-xl border-2 text-left transition-all ${selectedBeneficiary === benef.id ? 'border-violet-500 bg-violet-500/15' : 'border-white/10 hover:border-white/30 bg-white/5'}`}
+                                >
+                                  <p className="font-semibold text-white text-sm truncate">{benef.name}</p>
+                                  {benef.nickName && <p className="text-xs text-white/50 truncate">{benef.nickName}</p>}
+                                  <p className="text-xs text-white/60 mt-1 font-mono">****{String(benef.accountNumber).slice(-4)} · {benef.ifscCode}</p>
+                                  {benef.isVerified && <span className="inline-block mt-1 px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 text-xs">Verified</span>}
+                                </button>
+                              ))}
+                            </div>
+                            {totalBeneficiaryPages > 1 && (
+                              <div className="flex items-center justify-between gap-2 pt-3 mt-3 border-t border-white/10 shrink-0">
+                                <span className="text-xs text-white/50">Page {beneficiaryPage} of {totalBeneficiaryPages}</span>
+                                <div className="flex gap-1">
+                                  <button type="button" onClick={() => setBeneficiaryPage((p) => Math.max(1, p - 1))} disabled={beneficiaryPage <= 1} className="p-1.5 rounded-lg bg-white/10 hover:bg-white/20 disabled:opacity-40 text-white"><ChevronLeftIcon className="w-4 h-4" /></button>
+                                  <button type="button" onClick={() => setBeneficiaryPage((p) => Math.min(totalBeneficiaryPages, p + 1))} disabled={beneficiaryPage >= totalBeneficiaryPages} className="p-1.5 rounded-lg bg-white/10 hover:bg-white/20 disabled:opacity-40 text-white"><ChevronRightIcon className="w-4 h-4" /></button>
+                                </div>
+                              </div>
+                            )}
+                            {selectedBeneficiaryDetails && (
+                              <div className="mt-3 p-2.5 bg-violet-500/10 rounded-lg border border-violet-500/20 shrink-0">
+                                <p className="text-xs text-white/50">Payout to</p>
+                                <p className="font-medium text-white text-sm">{selectedBeneficiaryDetails.name}</p>
+                                <p className="text-xs text-white/60 font-mono">{selectedBeneficiaryDetails.accountNumber} · {selectedBeneficiaryDetails.ifscCode}</p>
+                              </div>
+                            )}
+                          </>
+                        )}
+                      </>
+                    )}
+                  </motion.div>
+                </div>
+              ) : (
+                /* Step 1: No profile — full-width Payout Account card (mobile / create profile) */
+                <motion.div
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: 0.15 }}
+                  className="glass rounded-2xl p-6 mb-6"
+                >
+                  <h3 className="font-semibold flex items-center gap-2 mb-4">
+                    <BuildingLibraryIcon className="w-5 h-5 text-violet-400" />
+                    Payout Account
+                  </h3>
+                  <div className="space-y-4">
+                  {!showCreateProfileForm ? (
+                    <>
+                      <p className="text-sm text-white/60">Enter the mobile number linked to your payout profile. You can have up to 3 profiles.</p>
+                      <div className="flex gap-3 flex-wrap">
+                        <input
+                          type="tel"
+                          value={profileMobile}
+                          onChange={(e) => setProfileMobile(e.target.value.replace(/\D/g, '').slice(0, 10))}
+                          placeholder="10-digit mobile number"
+                          className="flex-1 min-w-[180px] px-4 py-2.5 bg-white/5 border border-white/10 rounded-xl text-white font-mono"
+                          maxLength={10}
+                        />
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const m = profileMobile.replace(/\D/g, '').slice(-10);
+                            if (m.length !== 10 || !/^[6-9]/.test(m)) {
+                              toast.error('Enter a valid 10-digit mobile number');
+                              return;
+                            }
+                            lookupProfileMutation.mutate(m);
+                          }}
+                          disabled={lookupProfileMutation.isPending}
+                          className="px-4 py-2.5 rounded-xl bg-violet-500 hover:bg-violet-600 text-white font-medium disabled:opacity-50"
+                        >
+                          {lookupProfileMutation.isPending ? 'Finding...' : 'Find / Continue'}
+                        </button>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <p className="text-sm text-white/60">No profile for this number. Create one (max 3 profiles per user).</p>
+                      <div className="p-4 bg-white/5 rounded-xl border border-violet-500/20 space-y-4">
+                        <div>
+                          <label className="block text-sm text-white/70 mb-1">Mobile</label>
+                          <p className="font-mono text-white">{profileMobile || '—'}</p>
+                        </div>
+                        <div>
+                          <label className="block text-sm text-white/70 mb-1">Name *</label>
+                          <input
+                            type="text"
+                            value={newProfile.name}
+                            onChange={(e) => setNewProfile({ ...newProfile, name: e.target.value })}
+                            className="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-white"
+                            placeholder="Full name"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-sm text-white/70 mb-1">Email</label>
+                          <input
+                            type="email"
+                            value={newProfile.email}
+                            onChange={(e) => setNewProfile({ ...newProfile, email: e.target.value })}
+                            className="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-white"
+                            placeholder="email@example.com"
+                          />
+                        </div>
+                        <div className="flex gap-2">
+                          <button
+                            type="button"
+                            onClick={() => createProfileMutation.mutate({ mobile: profileMobile.replace(/\D/g, '').slice(-10), name: newProfile.name.trim(), email: newProfile.email.trim() || undefined })}
+                            disabled={createProfileMutation.isPending || !newProfile.name.trim()}
+                            className="px-4 py-2 rounded-lg bg-violet-500 hover:bg-violet-600 text-white font-medium disabled:opacity-50"
+                          >
+                            {createProfileMutation.isPending ? 'Creating...' : 'Create Profile'}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setShowCreateProfileForm(false)}
+                            className="px-4 py-2 rounded-lg bg-white/10 text-white/80 hover:bg-white/20"
+                          >
+                            Back
+                          </button>
+                        </div>
+                      </div>
+                    </>
+                  )}
+                </div>
+                  </motion.div>
+              )}
+            </>
+          )}
+          {/* Transaction Details — below Payout Account for PAYOUT */}
           <motion.div
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
@@ -1014,6 +1574,47 @@ function NewTransactionContent() {
             className="glass rounded-2xl p-6 mb-6"
           >
             <h3 className="font-semibold mb-4">Transaction Details</h3>
+            
+            {/* For PAYOUT: wallet balance and beneficiary summary */}
+            {transactionType === 'PAYOUT' && (
+              <div className="mb-4 space-y-3">
+                <div className="p-3 rounded-xl border bg-white/5 border-white/10 flex items-center justify-between">
+                  <span className="text-sm text-white/70 flex items-center gap-2">
+                    <WalletIcon className="w-5 h-5 text-violet-400" />
+                    Available balance
+                  </span>
+                  <span className="font-semibold text-white">
+                    ₹{walletBalance.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                  </span>
+                </div>
+                {payoutChargeResult != null && (
+                  <div className="p-3 rounded-xl border bg-white/5 border-white/10 flex items-center justify-between text-sm">
+                    <span className="text-white/70">Total deduction (amount + charges)</span>
+                    <span className="font-medium text-violet-300">
+                      ₹{payoutChargeResult.totalDeduction.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                    </span>
+                  </div>
+                )}
+                {insufficientBalance && (
+                  <div className="p-3 rounded-xl border border-red-500/30 bg-red-500/10 text-red-400 text-sm flex items-center gap-2">
+                    <ExclamationCircleIcon className="w-5 h-5 shrink-0" />
+                    Insufficient balance. Required ₹{payoutChargeResult?.totalDeduction.toLocaleString('en-IN', { minimumFractionDigits: 2 })}. Add funds to wallet to proceed.
+                  </div>
+                )}
+                {selectedBeneficiaryDetails && (
+                  <div className="p-3 bg-violet-500/10 rounded-xl border border-violet-500/20">
+                    <p className="text-xs text-white/50 mb-1">Beneficiary (auto-loaded)</p>
+                    <p className="font-medium text-white">{selectedBeneficiaryDetails.name}</p>
+                    <p className="text-sm text-white/70 font-mono mt-0.5">
+                      A/C: {selectedBeneficiaryDetails.accountNumber} • IFSC: {selectedBeneficiaryDetails.ifscCode}
+                    </p>
+                    {selectedBeneficiaryDetails.bankName && (
+                      <p className="text-xs text-white/50 mt-1">{selectedBeneficiaryDetails.bankName}</p>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
             
             <div className="space-y-4">
               <div>
@@ -1042,39 +1643,43 @@ function NewTransactionContent() {
                 />
               )}
               
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-white/70 mb-2">Customer Name</label>
-                  <input
-                    type="text"
-                    value={customerName}
-                    onChange={(e) => setCustomerName(e.target.value)}
-                    className="w-full px-4 py-2.5 bg-white/5 border border-white/10 rounded-xl text-white placeholder-white/30 focus:outline-none focus:ring-2 focus:ring-primary-500/50"
-                    placeholder="John Doe"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-white/70 mb-2">Customer Phone</label>
-                  <input
-                    type="tel"
-                    value={customerPhone}
-                    onChange={(e) => setCustomerPhone(e.target.value)}
-                    className="w-full px-4 py-2.5 bg-white/5 border border-white/10 rounded-xl text-white placeholder-white/30 focus:outline-none focus:ring-2 focus:ring-primary-500/50"
-                    placeholder="9876543210"
-                  />
-                </div>
-              </div>
-              
-              <div>
-                <label className="block text-sm font-medium text-white/70 mb-2">Customer Email</label>
-                <input
-                  type="email"
-                  value={customerEmail}
-                  onChange={(e) => setCustomerEmail(e.target.value)}
-                  className="w-full px-4 py-2.5 bg-white/5 border border-white/10 rounded-xl text-white placeholder-white/30 focus:outline-none focus:ring-2 focus:ring-primary-500/50"
-                  placeholder="customer@example.com"
-                />
-              </div>
+              {/* Customer fields: only for PAYIN; optional - uses your profile if empty */}
+              {transactionType !== 'PAYOUT' && (
+                <>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-sm font-medium text-white/70 mb-2">Customer Name (optional)</label>
+                      <input
+                        type="text"
+                        value={customerName}
+                        onChange={(e) => setCustomerName(e.target.value)}
+                        className="w-full px-4 py-2.5 bg-white/5 border border-white/10 rounded-xl text-white placeholder-white/30 focus:outline-none focus:ring-2 focus:ring-primary-500/50"
+                        placeholder="Uses your name if empty"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-white/70 mb-2">Customer Phone (optional)</label>
+                      <input
+                        type="tel"
+                        value={customerPhone}
+                        onChange={(e) => setCustomerPhone(e.target.value)}
+                        className="w-full px-4 py-2.5 bg-white/5 border border-white/10 rounded-xl text-white placeholder-white/30 focus:outline-none focus:ring-2 focus:ring-primary-500/50"
+                        placeholder="Uses your phone if empty"
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-white/70 mb-2">Customer Email (optional)</label>
+                    <input
+                      type="email"
+                      value={customerEmail}
+                      onChange={(e) => setCustomerEmail(e.target.value)}
+                      className="w-full px-4 py-2.5 bg-white/5 border border-white/10 rounded-xl text-white placeholder-white/30 focus:outline-none focus:ring-2 focus:ring-primary-500/50"
+                      placeholder="Uses your email if empty"
+                    />
+                  </div>
+                </>
+              )}
             </div>
           </motion.div>
 
@@ -1105,259 +1710,30 @@ function NewTransactionContent() {
             </motion.div>
           )}
 
-          {/* Beneficiary Selection for Payout */}
-          {transactionType === 'PAYOUT' && (
-            <motion.div
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: 0.3 }}
-              className="glass rounded-2xl p-6 mb-6"
-            >
-              <div className="flex items-center justify-between mb-4">
-                <h3 className="font-semibold flex items-center gap-2">
-                  <BuildingLibraryIcon className="w-5 h-5 text-violet-400" />
-                  Select Beneficiary
-                </h3>
-                <button
-                  type="button"
-                  onClick={() => setShowAddBeneficiary(!showAddBeneficiary)}
-                  className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-violet-500/20 text-violet-400 hover:bg-violet-500/30 text-sm font-medium transition-colors"
-                >
-                  <UserPlusIcon className="w-4 h-4" />
-                  {showAddBeneficiary ? 'Cancel' : 'Add New'}
-                </button>
-              </div>
-              
-              {/* Add New Beneficiary Form */}
-              {showAddBeneficiary && (
-                <motion.div
-                  initial={{ opacity: 0, height: 0 }}
-                  animate={{ opacity: 1, height: 'auto' }}
-                  className="mb-6 p-4 bg-white/5 rounded-xl border border-violet-500/20"
-                >
-                  <h4 className="font-medium mb-4 text-violet-400">Add New Beneficiary</h4>
-                  <div className="space-y-4">
-                    <div className="grid grid-cols-2 gap-4">
-                      <div>
-                        <label className="block text-sm text-white/70 mb-1">Name *</label>
-                        <input
-                          type="text"
-                          value={newBeneficiary.name}
-                          onChange={(e) => {
-                            setNewBeneficiary({ ...newBeneficiary, name: e.target.value });
-                            setBeneficiaryErrors(prev => ({ ...prev, name: '' }));
-                          }}
-                          className={`w-full px-3 py-2 bg-white/5 border rounded-lg text-white text-sm ${
-                            beneficiaryErrors.name ? 'border-red-500' : 'border-white/10'
-                          }`}
-                          placeholder="Account holder name"
-                        />
-                        {beneficiaryErrors.name && (
-                          <p className="text-red-400 text-xs mt-1">{beneficiaryErrors.name}</p>
-                        )}
-                      </div>
-                      <div>
-                        <label className="block text-sm text-white/70 mb-1">Nick Name</label>
-                        <input
-                          type="text"
-                          value={newBeneficiary.nickName}
-                          onChange={(e) => setNewBeneficiary({ ...newBeneficiary, nickName: e.target.value })}
-                          className="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-white text-sm"
-                          placeholder="e.g., Office Rent"
-                        />
-                      </div>
-                    </div>
-                    <div className="grid grid-cols-2 gap-4">
-                      <div>
-                        <label className="block text-sm text-white/70 mb-1">Account Number *</label>
-                        <input
-                          type="text"
-                          value={newBeneficiary.accountNumber}
-                          onChange={(e) => {
-                            setNewBeneficiary({ ...newBeneficiary, accountNumber: e.target.value.replace(/\D/g, '') });
-                            setBeneficiaryErrors(prev => ({ ...prev, accountNumber: '' }));
-                          }}
-                          className={`w-full px-3 py-2 bg-white/5 border rounded-lg text-white font-mono text-sm ${
-                            beneficiaryErrors.accountNumber ? 'border-red-500' : 'border-white/10'
-                          }`}
-                          placeholder="1234567890"
-                          maxLength={18}
-                        />
-                        {beneficiaryErrors.accountNumber && (
-                          <p className="text-red-400 text-xs mt-1">{beneficiaryErrors.accountNumber}</p>
-                        )}
-                      </div>
-                      <div>
-                        <label className="block text-sm text-white/70 mb-1">IFSC Code *</label>
-                        <div className="relative">
-                          <input
-                            type="text"
-                            value={newBeneficiary.ifscCode}
-                            onChange={(e) => {
-                              setNewBeneficiary({ ...newBeneficiary, ifscCode: e.target.value.toUpperCase() });
-                              setBeneficiaryErrors(prev => ({ ...prev, ifscCode: '' }));
-                            }}
-                            className={`w-full px-3 py-2 bg-white/5 border rounded-lg text-white font-mono text-sm uppercase ${
-                              beneficiaryErrors.ifscCode ? 'border-red-500' : ifscDetails?.valid ? 'border-emerald-500' : 'border-white/10'
-                            }`}
-                            placeholder="HDFC0001234"
-                            maxLength={11}
-                          />
-                          {isLookingUpIfsc && (
-                            <div className="absolute right-2 top-1/2 -translate-y-1/2 w-4 h-4 border-2 border-violet-400/30 border-t-violet-400 rounded-full animate-spin" />
-                          )}
-                          {ifscDetails?.valid && !isLookingUpIfsc && (
-                            <CheckCircleIcon className="absolute right-2 top-1/2 -translate-y-1/2 w-4 h-4 text-emerald-400" />
-                          )}
-                        </div>
-                        {beneficiaryErrors.ifscCode && (
-                          <p className="text-red-400 text-xs mt-1">{beneficiaryErrors.ifscCode}</p>
-                        )}
-                      </div>
-                    </div>
-                    
-                    {/* Bank details from IFSC */}
-                    {ifscDetails?.valid && (
-                      <motion.div
-                        initial={{ opacity: 0 }}
-                        animate={{ opacity: 1 }}
-                        className="p-2 bg-emerald-500/10 rounded-lg border border-emerald-500/20"
-                      >
-                        <p className="text-sm text-emerald-400 font-medium">{ifscDetails.bank}</p>
-                        {ifscDetails.branch && (
-                          <p className="text-xs text-white/60">{ifscDetails.branch}, {ifscDetails.city}</p>
-                        )}
-                      </motion.div>
-                    )}
-                    
-                    <div className="grid grid-cols-2 gap-4">
-                      <div>
-                        <label className="block text-sm text-white/70 mb-1">Account Type</label>
-                        <select
-                          value={newBeneficiary.accountType}
-                          onChange={(e) => setNewBeneficiary({ ...newBeneficiary, accountType: e.target.value })}
-                          className="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-white text-sm"
-                        >
-                          <option value="SAVINGS">Savings</option>
-                          <option value="CURRENT">Current</option>
-                        </select>
-                      </div>
-                      <div>
-                        <label className="block text-sm text-white/70 mb-1">Mobile Number</label>
-                        <input
-                          type="tel"
-                          value={newBeneficiary.phone}
-                          onChange={(e) => {
-                            const value = e.target.value.replace(/\D/g, '').slice(0, 10);
-                            setNewBeneficiary({ ...newBeneficiary, phone: value });
-                            setBeneficiaryErrors(prev => ({ ...prev, phone: '' }));
-                          }}
-                          className={`w-full px-3 py-2 bg-white/5 border rounded-lg text-white text-sm ${
-                            beneficiaryErrors.phone ? 'border-red-500' : 'border-white/10'
-                          }`}
-                          placeholder="9876543210"
-                          maxLength={10}
-                        />
-                        {beneficiaryErrors.phone && (
-                          <p className="text-red-400 text-xs mt-1">{beneficiaryErrors.phone}</p>
-                        )}
-                      </div>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={handleAddBeneficiary}
-                      disabled={addBeneficiaryMutation.isPending}
-                      className="w-full py-2.5 rounded-lg bg-violet-500 hover:bg-violet-600 text-white font-medium transition-colors disabled:opacity-50"
-                    >
-                      {addBeneficiaryMutation.isPending ? 'Adding...' : 'Add Beneficiary'}
-                    </button>
-                  </div>
-                </motion.div>
-              )}
-
-              {/* Beneficiary List */}
-              {loadingBeneficiaries ? (
-                <div className="flex items-center justify-center py-8">
-                  <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-violet-500"></div>
-                </div>
-              ) : beneficiaries.length === 0 ? (
-                <div className="text-center py-8 text-white/50">
-                  <BanknotesIcon className="w-12 h-12 mx-auto mb-3 opacity-50" />
-                  <p>No beneficiaries added yet</p>
-                  <p className="text-sm mt-1">Click "Add New" to register a beneficiary</p>
-                </div>
-              ) : (
-                <div className="space-y-3 max-h-64 overflow-y-auto">
-                  {beneficiaries.map((benef: any) => (
-                    <button
-                      key={benef.id}
-                      type="button"
-                      onClick={() => setSelectedBeneficiary(benef.id)}
-                      className={`w-full p-4 rounded-xl border-2 text-left transition-all ${
-                        selectedBeneficiary === benef.id
-                          ? 'border-violet-500 bg-violet-500/10'
-                          : 'border-white/10 hover:border-white/30 bg-white/5'
-                      }`}
-                    >
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <p className="font-medium">{benef.name}</p>
-                          {benef.nickName && (
-                            <p className="text-sm text-white/50">{benef.nickName}</p>
-                          )}
-                        </div>
-                        {benef.isVerified && (
-                          <span className="px-2 py-1 rounded-lg bg-emerald-500/10 text-emerald-400 text-xs">
-                            ✓ Verified
-                          </span>
-                        )}
-                      </div>
-                      <div className="mt-2 flex items-center gap-4 text-sm text-white/60">
-                        <span className="font-mono">A/C: ****{benef.accountNumber.slice(-4)}</span>
-                        <span>{benef.bankName || benef.ifscCode}</span>
-                        <span className="capitalize">{benef.accountType?.toLowerCase()}</span>
-                      </div>
-                    </button>
-                  ))}
-                </div>
-              )}
-              
-              {/* Selected Beneficiary Summary */}
-              {selectedBeneficiaryDetails && (
-                <div className="mt-4 p-3 bg-violet-500/10 rounded-xl border border-violet-500/20">
-                  <p className="text-sm text-white/50 mb-1">Paying to:</p>
-                  <p className="font-medium">{selectedBeneficiaryDetails.name}</p>
-                  <p className="text-sm text-white/60 font-mono">
-                    {selectedBeneficiaryDetails.accountNumber} • {selectedBeneficiaryDetails.ifscCode}
-                  </p>
-                </div>
-              )}
-            </motion.div>
-          )}
-
           {/* Submit Button */}
           <motion.div
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.4 }}
           >
-            {/* Show what's missing */}
-            {(!selectedPG || !amount || (transactionType === 'PAYOUT' && !selectedBeneficiary)) && (
+            {/* Show what's missing or insufficient balance */}
+            {(insufficientBalance || !selectedPG || !amount || (transactionType === 'PAYOUT' && !selectedBeneficiary)) && (
               <div className="mb-3 p-3 bg-amber-500/10 border border-amber-500/20 rounded-xl">
                 <p className="text-sm text-amber-400">
-                  Please complete: {' '}
-                  {[
-                    !selectedPG && 'Select a payment gateway',
-                    !amount && 'Enter amount',
-                    transactionType === 'PAYOUT' && !selectedBeneficiary && 'Select a beneficiary',
-                  ].filter(Boolean).join(', ')}
+                  {insufficientBalance
+                    ? 'Insufficient wallet balance. Add funds or reduce amount to proceed.'
+                    : `Please complete: ${[
+                        !selectedPG && 'Select a payment gateway',
+                        !amount && 'Enter amount',
+                        transactionType === 'PAYOUT' && !selectedBeneficiary && 'Select a beneficiary',
+                      ].filter(Boolean).join(', ')}`}
                 </p>
               </div>
             )}
             <div className="flex gap-3">
               <button
                 type="submit"
-                disabled={isSubmitting || !selectedPG || !amount || (transactionType === 'PAYOUT' && !selectedBeneficiary)}
+                disabled={isSubmitting || !selectedPG || !amount || (transactionType === 'PAYOUT' && !selectedBeneficiary) || insufficientBalance}
                 className={`flex-1 py-4 rounded-xl font-semibold text-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed ${
                   transactionType === 'PAYIN'
                     ? 'bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-600 hover:to-teal-600'

@@ -10,6 +10,7 @@ interface CreateBeneficiaryDTO {
   accountType?: string;
   email?: string;
   phone?: string;
+  profileId?: string; // Payout profile under which to add this beneficiary
 }
 
 // Validation helpers
@@ -60,6 +61,13 @@ export const beneficiaryService = {
       throw new AppError('Invalid mobile number (must be 10 digits starting with 6-9)', 400);
     }
     
+    if (data.profileId) {
+      const profile = await prisma.payoutProfile.findFirst({
+        where: { id: data.profileId, userId },
+      });
+      if (!profile) throw new AppError('Payout profile not found', 404);
+    }
+
     // Check if beneficiary with same account already exists for this user
     const existing = await prisma.beneficiary.findFirst({
       where: {
@@ -79,42 +87,54 @@ export const beneficiaryService = {
     const beneficiary = await prisma.beneficiary.create({
       data: {
         userId,
+        profileId: data.profileId || null,
         name: data.name.trim(),
-        nickName: data.nickName?.trim(),
         accountNumber: data.accountNumber.replace(/\D/g, ''),
         ifscCode: data.ifscCode.toUpperCase(),
         bankName: bankDetails?.bank || data.bankName || this.getBankNameFromIfsc(data.ifscCode),
         accountType: data.accountType || 'SAVINGS',
-        email: data.email?.toLowerCase().trim(),
-        phone: data.phone?.replace(/\D/g, ''),
       },
     });
 
     return beneficiary;
   },
 
-  async getBeneficiaries(userId: string, params?: { search?: string; isActive?: boolean }) {
+  async getBeneficiaries(userId: string, params?: { search?: string; isActive?: boolean; profileId?: string; page?: number; limit?: number }) {
     const where: any = { userId };
 
     if (params?.isActive !== undefined) {
       where.isActive = params.isActive;
     }
+    if (params?.profileId) {
+      where.profileId = params.profileId;
+    }
 
-    if (params?.search) {
+    if (params?.search?.trim()) {
+      const term = params.search.trim();
       where.OR = [
-        { name: { contains: params.search } },
-        { nickName: { contains: params.search } },
-        { accountNumber: { contains: params.search } },
-        { bankName: { contains: params.search } },
+        { name: { contains: term, mode: 'insensitive' } },
+        { nickName: { contains: term, mode: 'insensitive' } },
+        { accountNumber: { contains: term } },
+        { ifscCode: { contains: term, mode: 'insensitive' } },
+        { bankName: { contains: term, mode: 'insensitive' } },
       ];
     }
 
-    const beneficiaries = await prisma.beneficiary.findMany({
-      where,
-      orderBy: { createdAt: 'desc' },
-    });
+    const page = Math.max(1, params?.page ?? 1);
+    const limit = Math.min(100, Math.max(1, params?.limit ?? 20));
+    const skip = (page - 1) * limit;
 
-    return beneficiaries;
+    const [beneficiaries, total] = await Promise.all([
+      prisma.beneficiary.findMany({
+        where,
+        orderBy: { createdAt: 'desc' },
+        skip,
+        take: limit,
+      }),
+      prisma.beneficiary.count({ where }),
+    ]);
+
+    return { data: beneficiaries, total, page, limit };
   },
 
   async getBeneficiaryById(userId: string, beneficiaryId: string) {
@@ -151,18 +171,16 @@ export const beneficiaryService = {
       }
     }
 
+    const updateData: any = {};
+    if (data.name !== undefined) updateData.name = data.name.trim();
+    if (data.accountNumber !== undefined) updateData.accountNumber = data.accountNumber.replace(/\D/g, '');
+    if (data.ifscCode !== undefined) updateData.ifscCode = data.ifscCode.toUpperCase();
+    if (data.bankName !== undefined) updateData.bankName = data.bankName;
+    if (data.accountType !== undefined) updateData.accountType = data.accountType;
+
     const updated = await prisma.beneficiary.update({
       where: { id: beneficiaryId },
-      data: {
-        name: data.name,
-        nickName: data.nickName,
-        accountNumber: data.accountNumber,
-        ifscCode: data.ifscCode?.toUpperCase(),
-        bankName: data.bankName,
-        accountType: data.accountType,
-        email: data.email,
-        phone: data.phone,
-      },
+      data: updateData,
     });
 
     return updated;

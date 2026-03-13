@@ -5,6 +5,7 @@ import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuthStore } from './src/store/auth';
+import { SecurityGuard } from './src/components/SecurityGuard';
 
 // Screens
 import LoginScreen from './src/screens/LoginScreen';
@@ -19,6 +20,14 @@ import PayoutScreen from './src/screens/PayoutScreen';
 import TransferScreen from './src/screens/TransferScreen';
 import PaymentWebViewScreen from './src/screens/PaymentWebViewScreen';
 import CCPaymentScreen from './src/screens/CCPaymentScreen';
+import LedgerScreen from './src/screens/LedgerScreen';
+import RatesScreen from './src/screens/RatesScreen';
+import BeneficiariesScreen from './src/screens/BeneficiariesScreen';
+import SchemasScreen from './src/screens/SchemasScreen';
+import SettingsScreen from './src/screens/SettingsScreen';
+import UserDetailScreen from './src/screens/UserDetailScreen';
+import RateHierarchyScreen from './src/screens/RateHierarchyScreen';
+import TransactionDetailScreen from './src/screens/TransactionDetailScreen';
 
 const Stack = createNativeStackNavigator();
 const Tab = createBottomTabNavigator();
@@ -48,7 +57,7 @@ const DarkTheme = {
 
 function MainTabs({ navigation }: any) {
   const { user } = useAuthStore();
-  const canManageUsers = ['ADMIN', 'WHITE_LABEL', 'MASTER_DISTRIBUTOR'].includes(user?.role || '');
+  const canManageUsers = ['ADMIN', 'WHITE_LABEL', 'MASTER_DISTRIBUTOR', 'DISTRIBUTOR'].includes(user?.role || '');
 
   return (
     <Tab.Navigator
@@ -136,63 +145,73 @@ export default function App() {
   
   return (
     <QueryClientProvider client={queryClient}>
-      <NavigationContainer theme={DarkTheme}>
-        <StatusBar style="light" />
-        <Stack.Navigator
-          screenOptions={{
-            contentStyle: { backgroundColor: '#0a0a0f' },
-            headerStyle: {
-              backgroundColor: '#111118',
-            },
-            headerTintColor: '#fff',
-            headerTitleStyle: {
-              fontWeight: '600',
-              fontSize: 18,
-            },
-            headerBackTitleVisible: false,
-          }}
-        >
-          {isAuthenticated ? (
-            <>
-              <Stack.Screen 
-                name="Main" 
-                component={MainTabs}
-                options={{ headerShown: false }}
-              />
-              <Stack.Screen 
-                name="Payin" 
-                component={PayinScreen}
-                options={{ title: 'Create Payin' }}
-              />
-              <Stack.Screen 
-                name="Payout" 
-                component={PayoutScreen}
-                options={{ title: 'Create Payout' }}
-              />
-              <Stack.Screen 
-                name="Transfer" 
-                component={TransferScreen}
-                options={{ title: 'Transfer Funds' }}
-              />
-              <Stack.Screen 
-                name="CCPayment" 
-                component={CCPaymentScreen}
-                options={{ title: 'CC Bill Payment' }}
-              />
-              <Stack.Screen 
-                name="PaymentWebView" 
-                component={PaymentWebViewScreen}
-                options={{ title: 'Payment', headerBackTitle: 'Cancel' }}
-              />
-            </>
-          ) : (
-            <>
-              <Stack.Screen name="Login" component={LoginScreen} />
-              <Stack.Screen name="Onboarding" component={OnboardingScreen} />
-            </>
-          )}
-        </Stack.Navigator>
-      </NavigationContainer>
+      <SecurityGuard>
+        <NavigationContainer theme={DarkTheme}>
+          <StatusBar style="light" />
+          <Stack.Navigator
+            screenOptions={{
+              contentStyle: { backgroundColor: '#0a0a0f' },
+              headerStyle: {
+                backgroundColor: '#111118',
+              },
+              headerTintColor: '#fff',
+              headerTitleStyle: {
+                fontWeight: '600',
+                fontSize: 18,
+              },
+              headerBackTitleVisible: false,
+            }}
+          >
+            {isAuthenticated ? (
+              <>
+                <Stack.Screen 
+                  name="Main" 
+                  component={MainTabs}
+                  options={{ headerShown: false }}
+                />
+                <Stack.Screen 
+                  name="Payin" 
+                  component={PayinScreen}
+                  options={{ title: 'Create Payin' }}
+                />
+                <Stack.Screen 
+                  name="Payout" 
+                  component={PayoutScreen}
+                  options={{ title: 'Create Payout' }}
+                />
+                <Stack.Screen 
+                  name="Transfer" 
+                  component={TransferScreen}
+                  options={{ title: 'Transfer Funds' }}
+                />
+                <Stack.Screen 
+                  name="CCPayment" 
+                  component={CCPaymentScreen}
+                  options={{ title: 'CC Bill Payment' }}
+                />
+                <Stack.Screen 
+                  name="PaymentWebView" 
+                  component={PaymentWebViewScreen}
+                  options={{ title: 'Payment', headerBackTitle: 'Cancel' }}
+                />
+                <Stack.Screen name="Ledger" component={LedgerScreen} options={{ title: 'My Ledger' }} />
+                <Stack.Screen name="Rates" component={RatesScreen} options={{ title: 'My Rates' }} />
+                <Stack.Screen name="Beneficiaries" component={BeneficiariesScreen} options={{ title: 'Beneficiaries' }} />
+                <Stack.Screen name="Schemas" component={SchemasScreen} options={{ title: 'Schemas' }} />
+                <Stack.Screen name="Settings" component={SettingsScreen} options={{ title: 'Settings' }} />
+                <Stack.Screen name="UserDetail" component={UserDetailScreen} options={{ title: 'User' }} />
+                <Stack.Screen name="RateHierarchy" component={RateHierarchyScreen} options={{ title: 'Downline Rates' }} />
+                <Stack.Screen name="TransactionDetail" component={TransactionDetailScreen} options={{ title: 'Transaction' }} />
+              </>
+            ) : (
+              <>
+                <Stack.Screen name="Login" component={LoginScreen} />
+                <Stack.Screen name="Onboarding" component={OnboardingScreen} />
+              </>
+            )}
+          </Stack.Navigator>
+        </NavigationContainer>
+      </SecurityGuard>
     </QueryClientProvider>
   );
 }

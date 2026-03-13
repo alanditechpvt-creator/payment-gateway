@@ -19,6 +19,7 @@ export interface SabPaisaResponse {
   status: string;
   sabpaisaTxnId?: string;
   clientTxnId?: string;
+  bankTxnId?: string;
   paidAmount?: number;
   paymentMode?: string;
   transDate?: string;
@@ -29,6 +30,10 @@ export interface SabPaisaResponse {
 
 class SabPaisaService {
   private cfg = config.sabpaisa;
+
+  isEnabled(): boolean {
+    return !!(this.cfg?.enabled && this.cfg?.clientCode && this.cfg?.authKey && this.cfg?.authIV);
+  }
 
   /**
    * Encrypt data for SabPaisa
@@ -123,6 +128,76 @@ class SabPaisaService {
       : 'https://stage-securepay.sabpaisa.in/SabPaisa/sabPaisaInit?v=1';
   }
 
+  /** Settlement/Transaction Enquiry API URL */
+  getEnquiryUrl() {
+    return this.cfg.isProduction
+      ? 'https://settlementenquiry.sabpaisa.in/settlementenquiry/enquiry'
+      : 'https://stage-settlementenquiry.sabpaisa.in/settlementenquiry/enquiry';
+  }
+
+  /**
+   * Check transaction status via SabPaisa Settlement Enquiry API.
+   * Uses clientTxnId (our transactionId or the value we sent as clientTxnId).
+   */
+  async getTransactionStatus(clientTxnId: string): Promise<{
+    success: boolean;
+    status?: 'SUCCESS' | 'FAILED' | 'PENDING';
+    settlementStatus?: string;
+    raw?: Record<string, string>;
+    error?: string;
+  }> {
+    if (!this.cfg.enabled || !this.cfg.clientCode?.trim()) {
+      return { success: false, error: 'SabPaisa is disabled or not configured' };
+    }
+    try {
+      const plainText =
+        `clientCode=${this.cfg.clientCode.trim()}&clientTxnId=${String(clientTxnId).trim()}`;
+      const statusTransEncData = this.encrypt(plainText);
+      const url = this.getEnquiryUrl();
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          clientCode: this.cfg.clientCode.trim(),
+          statusTransEncData,
+        }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        logger.error(`SabPaisa enquiry API error: ${res.status}`, json);
+        return { success: false, error: json?.message || `HTTP ${res.status}` };
+      }
+      const encResponse = json.statusResponseData;
+      if (!encResponse) {
+        logger.warn('SabPaisa enquiry: no statusResponseData in response');
+        return { success: false, error: 'No status in response' };
+      }
+      const decrypted = this.decrypt(encResponse);
+      const params: Record<string, string> = {};
+      decrypted.split('&').forEach((pair) => {
+        const [key, value] = pair.split('=');
+        params[key] = decodeURIComponent(value || '');
+      });
+      const settlementStatus = (params.settlementStatus || params.status || '').toUpperCase();
+      let status: 'SUCCESS' | 'FAILED' | 'PENDING' = 'PENDING';
+      if (settlementStatus === 'SETTLED' || settlementStatus === '0000') {
+        status = 'SUCCESS';
+      } else if (
+        settlementStatus === 'FAILED' ||
+        settlementStatus === 'ABORTED' ||
+        settlementStatus === '0300' ||
+        settlementStatus === '0200'
+      ) {
+        status = 'FAILED';
+      }
+      logger.info(`SabPaisa enquiry for ${clientTxnId}: settlementStatus=${settlementStatus} -> ${status}`);
+      return { success: true, status, settlementStatus, raw: params };
+    } catch (error: any) {
+      logger.error('SabPaisa getTransactionStatus error:', error?.message);
+      return { success: false, error: error?.message || 'Enquiry failed' };
+    }
+  }
+
   private formatDate(date: Date) {
     const pad = (n: number) => n.toString().padStart(2, '0');
     return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ` +
@@ -180,7 +255,9 @@ class SabPaisaService {
         params[key] = decodeURIComponent(value || '');
       });
 
-      logger.info(`SabPaisa callback processed for ${params.clientTxnId}, status: ${params.status}`);
+      const bankTxnId = params.bankTxnId || params.BankTxnId || params.bankTxnID;
+
+      logger.info(`SabPaisa callback processed for ${params.clientTxnId}, status: ${params.status}, bankTxnId: ${bankTxnId || 'n/a'}`);
 
       const success = params.status === 'SUCCESS' || params.statusCode === '0000';
 
@@ -189,6 +266,7 @@ class SabPaisaService {
         status: params.status || params.statusCode,
         sabpaisaTxnId: params.sabpaisaTxnId,
         clientTxnId: params.clientTxnId,
+        bankTxnId,
         paidAmount: params.paidAmount ? parseFloat(params.paidAmount) : undefined,
         paymentMode: params.paymentMode,
         transDate: params.transDate,

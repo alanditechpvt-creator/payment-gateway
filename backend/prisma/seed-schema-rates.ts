@@ -56,51 +56,59 @@ async function seedSchemaRates() {
 async function seedSchemaPayinRates(schema: any, razorpay: any, sabpaisa: any) {
   console.log('  📊 Setting payin rates...');
 
-  // Define schema-specific base rates
-  // Platinum < Gold < Silver (Platinum gets best rates)
+  // RATE15: fixed base 1.4%, successor (user) rate 1.5% for every channel
+  const isRate15 = schema.code === 'RATE15';
+  const fixedBase = 0.014;
+  const fixedPayin = 0.015;
+
   const baseRateMultiplier = schema.code === 'PLATINUM' ? 1.0 :
                              schema.code === 'GOLD' ? 1.1 :
-                             1.2; // SILVER
+                             schema.code === 'SILVER' ? 1.2 : 1.0;
 
-  // Get all payin channels for each PG
+  const setRate = async (pg: any, channel: any, pgName: string) => {
+    const baseRate = isRate15 ? fixedBase : (channel.baseCost ?? 0.02);
+    const payinRate = isRate15 ? fixedPayin : (channel.baseCost * baseRateMultiplier);
+    try {
+      await prisma.schemaPayinRate.upsert({
+        where: {
+          schemaId_channelId: {
+            schemaId: schema.id,
+            channelId: channel.id,
+          }
+        },
+        create: {
+          schemaId: schema.id,
+          channelId: channel.id,
+          pgId: pg.id,
+          baseRate,
+          payinRate,
+          isEnabled: true,
+        },
+        update: {
+          baseRate,
+          payinRate,
+          isEnabled: true,
+        }
+      });
+      const baseStr = (baseRate * 100).toFixed(2);
+      const payinStr = (payinRate * 100).toFixed(2);
+      console.log(`    ✓ ${pgName} - ${channel.name}: base ${baseStr}% → user ${payinStr}%`);
+    } catch (error: any) {
+      console.error(`    ✗ Failed to set rate for ${channel.name}:`, error.message);
+    }
+  };
+
   if (razorpay) {
     const razorpayChannels = await prisma.transactionChannel.findMany({
       where: {
         pgId: razorpay.id,
         transactionType: 'PAYIN',
         isActive: true,
-        isDefault: false, // Skip default fallback channel
+        isDefault: false,
       }
     });
-
     for (const channel of razorpayChannels) {
-      // Calculate schema rate (PG base cost + markup)
-      const schemaRate = channel.baseCost * baseRateMultiplier;
-
-      try {
-        await prisma.schemaPayinRate.upsert({
-          where: {
-            schemaId_channelId: {
-              schemaId: schema.id,
-              channelId: channel.id,
-            }
-          },
-          create: {
-            schemaId: schema.id,
-            channelId: channel.id,
-            pgId: razorpay.id,
-            payinRate: schemaRate,
-            isEnabled: true,
-          },
-          update: {
-            payinRate: schemaRate,
-            isEnabled: true,
-          }
-        });
-        console.log(`    ✓ Razorpay - ${channel.name}: ${(schemaRate * 100).toFixed(2)}%`);
-      } catch (error: any) {
-        console.error(`    ✗ Failed to set rate for ${channel.name}:`, error.message);
-      }
+      await setRate(razorpay, channel, 'Razorpay');
     }
   }
 
@@ -113,34 +121,8 @@ async function seedSchemaPayinRates(schema: any, razorpay: any, sabpaisa: any) {
         isDefault: false,
       }
     });
-
     for (const channel of sabpaisaChannels) {
-      const schemaRate = channel.baseCost * baseRateMultiplier;
-
-      try {
-        await prisma.schemaPayinRate.upsert({
-          where: {
-            schemaId_channelId: {
-              schemaId: schema.id,
-              channelId: channel.id,
-            }
-          },
-          create: {
-            schemaId: schema.id,
-            channelId: channel.id,
-            pgId: sabpaisa.id,
-            payinRate: schemaRate,
-            isEnabled: true,
-          },
-          update: {
-            payinRate: schemaRate,
-            isEnabled: true,
-          }
-        });
-        console.log(`    ✓ Sabpaisa - ${channel.name}: ${(schemaRate * 100).toFixed(2)}%`);
-      } catch (error: any) {
-        console.error(`    ✗ Failed to set rate for ${channel.name}:`, error.message);
-      }
+      await setRate(sabpaisa, channel, 'Sabpaisa');
     }
   }
 }

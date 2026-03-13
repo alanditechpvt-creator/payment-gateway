@@ -2,6 +2,10 @@ import { Response, NextFunction } from 'express';
 import { transactionService } from '../services/transaction.service';
 import { AuthRequest } from '../middleware/auth';
 import { runpaisaService } from '../services/runpaisa.service';
+import { cashfreeService } from '../services/cashfree.service';
+import { razorpayService } from '../services/razorpay.service';
+import { sabPaisaService } from '../services/sabpaisa.service';
+import { payuService } from '../services/payu.service';
 import prisma from '../lib/prisma';
 import { logger } from '../utils/logger';
 
@@ -48,9 +52,11 @@ export const transactionController = {
   
   async getStats(req: AuthRequest, res: Response, next: NextFunction) {
     try {
+      const range = (req.query.range as string) || '7d';
+      const entityId = (req.query.entityId as string) || undefined;
       const startDate = req.query.startDate ? new Date(req.query.startDate as string) : undefined;
       const endDate = req.query.endDate ? new Date(req.query.endDate as string) : undefined;
-      const stats = await transactionService.getTransactionStats(req.user!.userId, startDate, endDate);
+      const stats = await transactionService.getTransactionStats(req.user!.userId, { range, entityId, startDate, endDate });
       res.json({ success: true, data: stats });
     } catch (error) {
       next(error);
@@ -124,9 +130,16 @@ export const transactionController = {
     }
   },
   
-  // Check status directly with Payment Gateway (OFFLINE mode - no webhook needed)
+  // Check status directly with Payment Gateway (OFFLINE mode - no webhook needed). Admin only.
   async checkStatusWithPG(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {
+      if (req.user?.role !== 'ADMIN') {
+        return res.status(403).json({
+          success: false,
+          error: 'Only admins can refresh transaction status from the payment gateway.',
+        });
+      }
+
       const { transactionId } = req.params;
       
       // Find the transaction
@@ -257,20 +270,256 @@ export const transactionController = {
             },
           });
         }
-      } else {
-        // For non-Runpaisa PGs or if Runpaisa is not configured
+      } else if (pgCode === 'CASHFREE') {
+        try {
+          const orderId = transaction.pgTransactionId || transaction.transactionId;
+          const cfStatus = await cashfreeService.getOrderStatus(orderId);
+          if (cfStatus && cfStatus.orderStatus) {
+            const mappedStatus = cashfreeService.mapOrderStatus(cfStatus.orderStatus);
+            if (mappedStatus === 'SUCCESS') {
+              const updated = await transactionService.updateTransactionStatus(
+                req.user!.userId,
+                transaction.id,
+                'SUCCESS'
+              );
+              return res.json({
+                success: true,
+                data: {
+                  transaction: updated,
+                  pgStatus: cfStatus.orderStatus,
+                  message: 'Payment verified as successful! Wallet credited.',
+                  autoUpdated: true,
+                },
+              });
+            } else if (mappedStatus === 'FAILED') {
+              const updated = await transactionService.updateTransactionStatus(
+                req.user!.userId,
+                transaction.id,
+                'FAILED'
+              );
+              return res.json({
+                success: true,
+                data: {
+                  transaction: updated,
+                  pgStatus: cfStatus.orderStatus,
+                  message: 'Payment failed on gateway.',
+                  autoUpdated: true,
+                },
+              });
+            }
+            return res.json({
+              success: true,
+              data: {
+                transaction,
+                pgStatus: cfStatus.orderStatus,
+                message: 'Payment is still pending on gateway.',
+                autoUpdated: false,
+              },
+            });
+          }
+        } catch (cfErr: any) {
+          logger.error('Cashfree status check error:', cfErr?.message);
+        }
         return res.json({
           success: true,
           data: {
             transaction,
-            pgStatus: 'MANUAL_CHECK_REQUIRED',
-            message: pgCode === 'RUNPAISA' 
-              ? 'Runpaisa is not configured. Please check manually and update.'
-              : `Status check not available for ${pgCode || 'this gateway'}. Please check manually and update.`,
+            pgStatus: 'UNKNOWN',
+            message: 'Could not verify status with Cashfree. You can manually update the transaction.',
+            autoUpdated: false,
+          },
+        });
+      } else if (pgCode === 'RAZORPAY' && razorpayService.isEnabled()) {
+        try {
+          const orderId = transaction.pgTransactionId || transaction.transactionId;
+          const rpOrder = await razorpayService.getOrderDetails(orderId);
+          if (rpOrder.success && rpOrder.data) {
+            const orderStatus = (rpOrder.data as any).status; // created | attempted | paid
+            if (orderStatus === 'paid') {
+              const updated = await transactionService.updateTransactionStatus(
+                req.user!.userId,
+                transaction.id,
+                'SUCCESS'
+              );
+              return res.json({
+                success: true,
+                data: {
+                  transaction: updated,
+                  pgStatus: orderStatus,
+                  message: 'Payment verified as successful! Wallet credited.',
+                  autoUpdated: true,
+                },
+              });
+            }
+            if (orderStatus === 'created' || orderStatus === 'attempted') {
+              return res.json({
+                success: true,
+                data: {
+                  transaction,
+                  pgStatus: orderStatus,
+                  message: 'Payment is still pending on Razorpay. Please complete the payment.',
+                  autoUpdated: false,
+                },
+              });
+            }
+            return res.json({
+              success: true,
+              data: {
+                transaction,
+                pgStatus: orderStatus || 'UNKNOWN',
+                message: 'Could not determine final status from Razorpay.',
+                autoUpdated: false,
+              },
+            });
+          }
+        } catch (rpErr: any) {
+          logger.error('Razorpay status check error:', rpErr?.message);
+        }
+        return res.json({
+          success: true,
+          data: {
+            transaction,
+            pgStatus: 'UNKNOWN',
+            message: 'Could not verify status with Razorpay. You can manually update the transaction.',
+            autoUpdated: false,
+          },
+        });
+      } else if (pgCode === 'SABPAISA' && sabPaisaService.isEnabled()) {
+        try {
+          const clientTxnId = transaction.transactionId;
+          const sabStatus = await sabPaisaService.getTransactionStatus(clientTxnId);
+          if (sabStatus.success && sabStatus.status) {
+            if (sabStatus.status === 'SUCCESS') {
+              const updated = await transactionService.updateTransactionStatus(
+                req.user!.userId,
+                transaction.id,
+                'SUCCESS'
+              );
+              return res.json({
+                success: true,
+                data: {
+                  transaction: updated,
+                  pgStatus: sabStatus.settlementStatus || 'SETTLED',
+                  message: 'Payment verified as successful! Wallet credited.',
+                  autoUpdated: true,
+                },
+              });
+            } else if (sabStatus.status === 'FAILED') {
+              const updated = await transactionService.updateTransactionStatus(
+                req.user!.userId,
+                transaction.id,
+                'FAILED'
+              );
+              return res.json({
+                success: true,
+                data: {
+                  transaction: updated,
+                  pgStatus: sabStatus.settlementStatus || 'FAILED',
+                  message: 'Payment failed on gateway.',
+                  autoUpdated: true,
+                },
+              });
+            }
+            return res.json({
+              success: true,
+              data: {
+                transaction,
+                pgStatus: sabStatus.settlementStatus || 'PENDING',
+                message: 'Payment is still pending on Sabpaisa. Please complete the payment.',
+                autoUpdated: false,
+              },
+            });
+          }
+        } catch (sabErr: any) {
+          logger.error('Sabpaisa status check error:', sabErr?.message);
+        }
+        return res.json({
+          success: true,
+          data: {
+            transaction,
+            pgStatus: 'UNKNOWN',
+            message: 'Could not verify status with Sabpaisa. You can manually update the transaction.',
+            autoUpdated: false,
+          },
+        });
+      } else if (pgCode === 'PAYU' && payuService.isEnabled()) {
+        try {
+          const txnId = transaction.transactionId;
+          const payuStatus = await payuService.getTransactionStatus(txnId);
+          if (payuStatus.success && payuStatus.status) {
+            if (payuStatus.status === 'SUCCESS') {
+              const updated = await transactionService.updateTransactionStatus(
+                req.user!.userId,
+                transaction.id,
+                'SUCCESS'
+              );
+              return res.json({
+                success: true,
+                data: {
+                  transaction: updated,
+                  pgStatus: payuStatus.pgStatus || 'success',
+                  message: 'Payment verified as successful! Wallet credited.',
+                  autoUpdated: true,
+                },
+              });
+            } else if (payuStatus.status === 'FAILED') {
+              const updated = await transactionService.updateTransactionStatus(
+                req.user!.userId,
+                transaction.id,
+                'FAILED'
+              );
+              return res.json({
+                success: true,
+                data: {
+                  transaction: updated,
+                  pgStatus: payuStatus.pgStatus || 'failure',
+                  message: 'Payment failed on gateway.',
+                  autoUpdated: true,
+                },
+              });
+            }
+            return res.json({
+              success: true,
+              data: {
+                transaction,
+                pgStatus: payuStatus.pgStatus || 'PENDING',
+                message: 'Payment is still pending on PayU. Please complete the payment.',
+                autoUpdated: false,
+              },
+            });
+          }
+        } catch (payuErr: any) {
+          logger.error('PayU status check error:', payuErr?.message);
+        }
+        return res.json({
+          success: true,
+          data: {
+            transaction,
+            pgStatus: 'UNKNOWN',
+            message: 'Could not verify status with PayU. You can manually update the transaction.',
             autoUpdated: false,
           },
         });
       }
+
+      // For other PGs or if not configured
+      return res.json({
+        success: true,
+        data: {
+          transaction,
+          pgStatus: 'MANUAL_CHECK_REQUIRED',
+          message: pgCode === 'RUNPAISA'
+            ? 'Runpaisa is not configured. Please check manually and update.'
+            : pgCode === 'RAZORPAY'
+            ? 'Razorpay is not configured. Please check manually and update.'
+            : pgCode === 'SABPAISA'
+            ? 'Sabpaisa is not configured. Please check manually and update.'
+            : pgCode === 'PAYU'
+            ? 'PayU is not configured. Please check manually and update.'
+            : `Status check not available for ${pgCode || 'this gateway'}. Please check manually and update.`,
+          autoUpdated: false,
+        },
+      });
     } catch (error) {
       next(error);
     }

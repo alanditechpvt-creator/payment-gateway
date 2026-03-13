@@ -13,8 +13,10 @@ export const config = {
   jwt: {
     secret: process.env.JWT_SECRET || 'default-secret-change-me',
     refreshSecret: process.env.JWT_REFRESH_SECRET || 'default-refresh-secret',
-    expiresIn: process.env.JWT_EXPIRES_IN || '24h', // Extended for development
-    refreshExpiresIn: process.env.JWT_REFRESH_EXPIRES_IN || '7d',
+    // Access token lifetime (web + mobile). Default: 30 minutes.
+    expiresIn: process.env.JWT_EXPIRES_IN || '30m',
+    // Refresh token lifetime (absolute session timeout). Default: 30 minutes.
+    refreshExpiresIn: process.env.JWT_REFRESH_EXPIRES_IN || '30m',
   },
   
   cors: {
@@ -115,6 +117,14 @@ export const config = {
     isProduction: process.env.SABPAISA_PRODUCTION === 'true',
   },
 
+  // Payment Gateway: PayU
+  payu: {
+    enabled: process.env.PAYU_ENABLED === 'true',
+    key: process.env.PAYU_KEY || '',
+    salt: process.env.PAYU_SALT || '',
+    isProduction: process.env.PAYU_PRODUCTION === 'true',
+  },
+
   // Payment Gateway: BBPS (Live API)
   bbps: (() => {
     const isProduction = process.env.BBPS_ENDPOINT === 'production';
@@ -144,7 +154,6 @@ export const config = {
   })(),
   
   // CAPTCHA: Cloudflare Turnstile (free, privacy-friendly)
-  // Get keys from: https://dash.cloudflare.com/turnstile
   captcha: {
     enabled: process.env.CAPTCHA_ENABLED === 'true',
     siteKey: process.env.CAPTCHA_SITE_KEY || '', // Public key for frontend

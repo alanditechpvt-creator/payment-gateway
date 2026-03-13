@@ -17,6 +17,7 @@ import {
   CheckCircleIcon,
   XCircleIcon,
   CurrencyRupeeIcon,
+  InformationCircleIcon,
 } from '@heroicons/react/24/outline';
 
 const ALLOWED_CHILD_ROLES: Record<string, string[]> = {
@@ -63,6 +64,9 @@ export default function UsersPage() {
   const [selectedPG, setSelectedPG] = useState('');
   const [payinRate, setPayinRate] = useState('');
   const [payoutRate, setPayoutRate] = useState('');
+  // Schema rate details modal (i button)
+  const [showSchemaRatesModal, setShowSchemaRatesModal] = useState(false);
+  const [schemaRatesModalData, setSchemaRatesModalData] = useState<{ schema: any; ratesByPG: Record<string, { paymentGateway: any; rates: any[] }> } | null>(null);
 
   // Can assign rates check
   const canAssignRates = user?.role === 'ADMIN' || user?.role === 'WHITE_LABEL' || user?.role === 'MASTER_DISTRIBUTOR';
@@ -103,14 +107,15 @@ export default function UsersPage() {
     enabled: !!selectedUser && showRatesModal,
   });
 
-  // Assign rate mutation
+  // Assign PG to user (schema-based: no payin/payout when user has schema)
   const assignRateMutation = useMutation({
-    mutationFn: ({ targetUserId, pgId, payinRate, payoutRate }: any) =>
+    mutationFn: ({ targetUserId, pgId, payinRate, payoutRate }: { targetUserId: string; pgId: string; payinRate?: number; payoutRate?: number }) =>
       rateApi.assignRate(targetUserId, pgId, payinRate, payoutRate),
     onSuccess: () => {
-      toast.success('Rate assigned successfully!');
-      refetchUserRates();
+      toast.success('Payment gateway assigned successfully!');
       queryClient.invalidateQueries({ queryKey: ['children-rates'] });
+      queryClient.invalidateQueries({ queryKey: ['user-rates'] });
+      refetchUserRates();
       setSelectedPG('');
       setPayinRate('');
       setPayoutRate('');
@@ -181,23 +186,26 @@ export default function UsersPage() {
       toast.error('Please select a payment gateway');
       return;
     }
-    
+    // When user has a schema, rates come from schema – assign PG only (same as admin)
+    if (selectedUser.schemaId) {
+      assignRateMutation.mutate({
+        targetUserId: selectedUser.id,
+        pgId: selectedPG,
+      });
+      return;
+    }
     const pg = availablePGs.find((p: any) => p.id === selectedPG);
     if (!pg) return;
-    
     const payinRateNum = parseFloat(payinRate) / 100;
     const payoutRateNum = parseFloat(payoutRate) / 100;
-    
-    if (payinRateNum < pg.minPayinRate) {
-      toast.error(`Payin rate cannot be less than ${(pg.minPayinRate * 100).toFixed(2)}%`);
+    if (payinRateNum < (pg.minPayinRate ?? 0)) {
+      toast.error('Payin rate is below the minimum allowed for this gateway.');
       return;
     }
-    
-    if (payoutRateNum < pg.minPayoutRate) {
-      toast.error(`Payout rate cannot be less than ${(pg.minPayoutRate * 100).toFixed(2)}%`);
+    if (payoutRateNum < (pg.minPayoutRate ?? 0)) {
+      toast.error('Payout rate is below the minimum allowed for this gateway.');
       return;
     }
-    
     assignRateMutation.mutate({
       targetUserId: selectedUser.id,
       pgId: selectedPG,
@@ -602,12 +610,57 @@ export default function UsersPage() {
               </div>
 
               <div className="p-6 space-y-6">
-                {/* Current Rates */}
+                {/* Schema assigned (same as admin) */}
+                <div className="p-4 bg-white/5 rounded-xl border border-white/10">
+                  <h3 className="text-lg font-medium text-white mb-2 flex items-center gap-2">
+                    Schema assigned
+                    {selectedUser?.schemaId && (
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          try {
+                            const res = await schemaApi.getSchemaPayinRates(selectedUser.schemaId);
+                            const data = res.data?.data;
+                            if (data) {
+                              setSchemaRatesModalData({ schema: data.schema, ratesByPG: data.ratesByPG || {} });
+                              setShowSchemaRatesModal(true);
+                            }
+                          } catch (e: any) {
+                            toast.error(e.response?.data?.error || 'Failed to load schema rates');
+                          }
+                        }}
+                        className="p-1 rounded-full hover:bg-white/10 text-white/70 hover:text-white"
+                        title="View schema rate details"
+                      >
+                        <InformationCircleIcon className="w-5 h-5" />
+                      </button>
+                    )}
+                  </h3>
+                  {selectedUser?.schemaId ? (
+                    <p className="text-white/80">
+                      {selectedUser.schema?.name || schemas.find((s: any) => s.id === selectedUser.schemaId)?.name || 'Unknown'}
+                      {' '}
+                      ({selectedUser.schema?.code || schemas.find((s: any) => s.id === selectedUser.schemaId)?.code || '-'})
+                    </p>
+                  ) : (
+                    <p className="text-white/50">No schema assigned. Assign schema in user profile.</p>
+                  )}
+                  <p className="text-xs text-white/40 mt-2">
+                    Rates and commissions are based on the user&apos;s schema.
+                  </p>
+                </div>
+
+                {/* Payment gateways assigned */}
                 <div>
-                  <h3 className="text-lg font-medium text-white mb-3">Current Assigned Rates</h3>
+                  <h3 className="text-lg font-medium text-white mb-3">Payment gateways assigned</h3>
+                  {selectedUser.schemaId && (
+                    <p className="text-sm text-white/50 mb-3">
+                      Rates follow the user&apos;s schema. Assign gateways below; no need to enter payin/payout.
+                    </p>
+                  )}
                   {userRates.length === 0 ? (
                     <div className="text-center py-6 bg-white/5 rounded-xl text-white/50">
-                      No rates assigned yet. Assign rates below.
+                      No payment gateways assigned yet. Assign one below.
                     </div>
                   ) : (
                     <div className="grid gap-3">
@@ -617,39 +670,43 @@ export default function UsersPage() {
                           className="flex items-center justify-between p-4 bg-white/5 rounded-xl border border-white/10"
                         >
                           <div>
-                            <p className="font-medium text-white">{rate.paymentGateway.name}</p>
-                            <p className="text-sm text-white/50">{rate.paymentGateway.code}</p>
-                          </div>
-                          <div className="text-right">
-                            <p className="text-emerald-400 font-mono">
-                              Payin: {(rate.payinRate * 100).toFixed(2)}%
+                            <p className="font-medium text-white">{rate.paymentGateway?.name}</p>
+                            <p className="text-sm text-white/50">
+                              {rate.paymentGateway?.code}
+                              {selectedUser.schemaId && (
+                                <span className="text-white/40"> · Rates from schema</span>
+                              )}
+                              {!selectedUser.schemaId && rate.payinRate != null && (
+                                <span className="text-white/40"> · Payin {(rate.payinRate * 100).toFixed(2)}%</span>
+                              )}
                             </p>
-                            <p className="text-blue-400 font-mono text-sm">
-                              Payout: {(rate.payoutRate * 100).toFixed(2)}%
-                            </p>
                           </div>
-                          <button
-                            onClick={() => {
-                              setSelectedPG(rate.paymentGateway.id);
-                              setPayinRate((rate.payinRate * 100).toString());
-                              setPayoutRate((rate.payoutRate * 100).toString());
-                            }}
-                            className="ml-4 px-3 py-1.5 bg-amber-500/10 text-amber-400 rounded-lg text-sm hover:bg-amber-500/20"
-                          >
-                            Edit
-                          </button>
+                          {!selectedUser.schemaId && (
+                            <button
+                              onClick={() => {
+                                setSelectedPG(rate.paymentGateway?.id);
+                                setPayinRate(rate.payinRate != null ? (rate.payinRate * 100).toString() : '');
+                                setPayoutRate(rate.payoutRate != null ? (rate.payoutRate * 100).toString() : '');
+                              }}
+                              className="px-3 py-1.5 bg-amber-500/10 text-amber-400 rounded-lg text-sm hover:bg-amber-500/20"
+                            >
+                              Edit
+                            </button>
+                          )}
                         </div>
                       ))}
                     </div>
                   )}
                 </div>
 
-                {/* Assign New Rate */}
+                {/* Assign payment gateway */}
                 <div className="pt-4 border-t border-white/10">
-                  <h3 className="text-lg font-medium text-white mb-3">
-                    {selectedPG ? 'Update Rate' : 'Assign New Rate'}
-                  </h3>
-                  
+                  <h3 className="text-lg font-medium text-white mb-3">Assign payment gateway</h3>
+                  {selectedUser.schemaId && (
+                    <p className="text-sm text-white/50 mb-3">
+                      Rates are taken from the user&apos;s schema. Select a gateway and click Assign.
+                    </p>
+                  )}
                   <div className="space-y-4">
                     <div>
                       <label className="block text-sm font-medium text-white/70 mb-2">Payment Gateway</label>
@@ -657,16 +714,14 @@ export default function UsersPage() {
                         value={selectedPG}
                         onChange={(e) => {
                           setSelectedPG(e.target.value);
-                          const pg = availablePGs.find((p: any) => p.id === e.target.value);
-                          if (pg) {
-                            // Check if user already has this rate
-                            const existingRate = userRates.find((r: any) => r.paymentGateway.id === e.target.value);
+                          if (!selectedUser.schemaId) {
+                            const existingRate = userRates.find((r: any) => r.paymentGateway?.id === e.target.value);
                             if (existingRate) {
-                              setPayinRate((existingRate.payinRate * 100).toString());
-                              setPayoutRate((existingRate.payoutRate * 100).toString());
+                              setPayinRate(existingRate.payinRate != null ? (existingRate.payinRate * 100).toString() : '');
+                              setPayoutRate(existingRate.payoutRate != null ? (existingRate.payoutRate * 100).toString() : '');
                             } else {
-                              setPayinRate((pg.minPayinRate * 100).toString());
-                              setPayoutRate((pg.minPayoutRate * 100).toString());
+                              setPayinRate('');
+                              setPayoutRate('');
                             }
                           }
                         }}
@@ -675,23 +730,24 @@ export default function UsersPage() {
                         <option value="">Select Payment Gateway</option>
                         {availablePGs.map((pg: any) => (
                           <option key={pg.id} value={pg.id}>
-                            {pg.name} (Min: {(pg.minPayinRate * 100).toFixed(2)}%)
+                            {pg.name}
                           </option>
                         ))}
                       </select>
                     </div>
 
-                    {selectedPG && (
-                      <>
-                        <div className="p-3 bg-emerald-500/10 rounded-lg border border-emerald-500/30 text-sm">
-                          <p className="text-emerald-400">
-                            Your base rate for this PG: {(availablePGs.find((p: any) => p.id === selectedPG)?.minPayinRate * 100 || 0).toFixed(2)}%
-                          </p>
-                          <p className="text-white/50 text-xs mt-1">
-                            You can only assign rates equal to or higher than your base rate.
-                          </p>
-                        </div>
+                    {selectedPG && selectedUser.schemaId && (
+                      <button
+                        onClick={handleAssignRate}
+                        disabled={assignRateMutation.isPending}
+                        className="w-full btn-primary"
+                      >
+                        {assignRateMutation.isPending ? 'Assigning...' : 'Assign gateway'}
+                      </button>
+                    )}
 
+                    {selectedPG && !selectedUser.schemaId && (
+                      <>
                         <div className="grid grid-cols-2 gap-4">
                           <div>
                             <label className="block text-sm font-medium text-white/70 mb-2">Payin Rate (%)</label>
@@ -703,11 +759,6 @@ export default function UsersPage() {
                               className="w-full px-4 py-2.5 bg-white/5 border border-white/10 rounded-xl text-white focus:outline-none focus:ring-2 focus:ring-primary-500/50"
                               placeholder="e.g., 1.5"
                             />
-                            {payinRate && availablePGs.find((p: any) => p.id === selectedPG) && (
-                              <p className="text-xs text-emerald-400 mt-1">
-                                Your profit: {(parseFloat(payinRate) - availablePGs.find((p: any) => p.id === selectedPG).minPayinRate * 100).toFixed(2)}%
-                              </p>
-                            )}
                           </div>
                           <div>
                             <label className="block text-sm font-medium text-white/70 mb-2">Payout Rate (%)</label>
@@ -719,14 +770,8 @@ export default function UsersPage() {
                               className="w-full px-4 py-2.5 bg-white/5 border border-white/10 rounded-xl text-white focus:outline-none focus:ring-2 focus:ring-primary-500/50"
                               placeholder="e.g., 1.5"
                             />
-                            {payoutRate && availablePGs.find((p: any) => p.id === selectedPG) && (
-                              <p className="text-xs text-blue-400 mt-1">
-                                Your profit: {(parseFloat(payoutRate) - availablePGs.find((p: any) => p.id === selectedPG).minPayoutRate * 100).toFixed(2)}%
-                              </p>
-                            )}
                           </div>
                         </div>
-
                         <button
                           onClick={handleAssignRate}
                           disabled={assignRateMutation.isPending || !payinRate || !payoutRate}
@@ -742,6 +787,53 @@ export default function UsersPage() {
             </motion.div>
           </motion.div>
         )}
+
+      {/* Schema rate details modal (i button) */}
+      {showSchemaRatesModal && schemaRatesModalData && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[60]" onClick={() => setShowSchemaRatesModal(false)}>
+          <div
+            className="bg-[#1a1a2e] rounded-2xl p-6 w-full max-w-2xl max-h-[85vh] overflow-hidden border border-white/10 shadow-xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-semibold text-white">
+                Schema rate details: {schemaRatesModalData.schema?.name || schemaRatesModalData.schema?.code}
+              </h3>
+              <button
+                onClick={() => setShowSchemaRatesModal(false)}
+                className="p-2 rounded-lg hover:bg-white/10 text-white/70"
+              >
+                <XMarkIcon className="w-5 h-5" />
+              </button>
+            </div>
+            <p className="text-sm text-white/50 mb-4">
+              Per-channel payin rates applied to users on this schema. Commission is calculated from these rates.
+            </p>
+            <div className="overflow-y-auto max-h-[60vh] space-y-4">
+              {Object.entries(schemaRatesModalData.ratesByPG).map(([pgCode, pgData]: [string, any]) => (
+                <div key={pgCode} className="bg-white/5 rounded-xl p-4 border border-white/10">
+                  <h4 className="font-medium text-white mb-2">{pgData.paymentGateway?.name || pgCode}</h4>
+                  <div className="grid gap-1.5 text-sm">
+                    {(pgData.rates || []).map((r: any) => (
+                      <div key={r.id || r.channelId} className="flex justify-between text-white/80">
+                        <span>{r.channelName || r.channelCode}</span>
+                        <span className="font-mono text-emerald-400">{r.payinRateDisplay ?? `${(Number(r.payinRate) * 100).toFixed(2)}%`}</span>
+                      </div>
+                    ))}
+                    {(!pgData.rates || pgData.rates.length === 0) && (
+                      <p className="text-white/50">No channel rates defined</p>
+                    )}
+                  </div>
+                </div>
+              ))}
+              {Object.keys(schemaRatesModalData.ratesByPG).length === 0 && (
+                <p className="text-white/50">No rate details for this schema yet.</p>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       </AnimatePresence>
     </div>
   );

@@ -1,4 +1,20 @@
 # ================================================================================
+# ADMIN TRANSACTION OVERRIDE FEATURE
+# ================================================================================
+ADMIN_OVERRIDE_ENABLED=false
+# ================================================================================
+# BBPS LIVE API CONFIGURATION
+# ================================================================================
+BBPS_ENABLED=true
+BBPS_ACCESS_CODE=AVVE35JN22ZK88VCYW
+BBPS_WORKING_KEY=C61E255FF301E786683DB016BF747024
+BBPS_AGENT_INSTITUTION_ID=RA79
+BBPS_AGENT_INSTITUTION_NAME=Alandi Tech Business Pvt Ltd
+BBPS_AGENT_ID=CC01CC01513515340681
+BBPS_PAYMENT_CHANNEL=AGT
+BBPS_INSTITUTE_ID=RA79
+BBPS_ENDPOINT=production
+# ================================================================================
 # PAYMENT GATEWAY MANAGEMENT SYSTEM - BACKEND CONFIGURATION
 # ================================================================================
 # Copy this file to .env and update the values
@@ -26,7 +42,7 @@ CORS_ORIGIN="http://localhost:5000,http://localhost:5002"
 # ONLINE  = Use webhooks (requires public URL via ngrok or hosting)
 # OFFLINE = Use manual "Check Status" button (no public URL needed)
 # ================================================================================
-PG_MODE="OFFLINE"
+PG_MODE="ONLINE"
 
 # Auto-check interval in seconds (0 = disabled, only manual check)
 # Set to 30 for polling every 30 seconds (optional)
@@ -37,23 +53,12 @@ PG_AUTO_CHECK_INTERVAL=0
 # ================================================================================
 # Set to true to enable Runpaisa API calls, false to use mock payment links
 # Keep false until IP is whitelisted with Runpaisa
-RUNPAISA_ENABLED=false
-
-# ================================================================================
-# BBPS LIVE API CONFIGURATION
-# ================================================================================
-BBPS_ENABLED=true
-BBPS_CLIENT_ID=your-bbps-client-id
-BBPS_API_KEY=your-bbps-api-key
-BBPS_PARTNER_ID=your-bbps-partner-id
-BBPS_ENDPOINT=https://api.bbps.in/production
-BBPS_CHANNEL_ID=your-channel-id
-BBPS_SUB_MEMBER_ID=your-sub-member-id
+RUNPAISA_ENABLED=true
 
 # Get these from Runpaisa support team
-RUNPAISA_CLIENT_ID="your-client-id"
-RUNPAISA_USERNAME="your-username"
-RUNPAISA_PASSWORD="your-password"
+RUNPAISA_CLIENT_ID="1234567890"
+RUNPAISA_USERNAME="9319934804"
+RUNPAISA_PASSWORD="12345678"
 
 # Callback URL (only needed for ONLINE mode)
 # For OFFLINE mode, this is not used
@@ -74,8 +79,11 @@ ADMIN_URL="http://localhost:5002"
 # Get keys from: https://dash.cloudflare.com/turnstile
 # Set to true to enable CAPTCHA verification for login
 CAPTCHA_ENABLED=true
-# CAPTCHA_SITE_KEY="your-turnstile-site-key"
-# CAPTCHA_SECRET_KEY="your-turnstile-secret-key"
+# CAPTCHA_SITE_KEY="0x4AAAAAACItvgUPLQvvdcF2"
+# CAPTCHA_SECRET_KEY="0x4AAAAAACItvs4XNjoNhiTaC5n0Ys4qRY4"
+# Replace your current keys with these test keys:
+CAPTCHA_SITE_KEY="1x00000000000000000000AA"
+CAPTCHA_SECRET_KEY="1x0000000000000000000000000000000AA"
 
 # Note: Additional security settings (lockout attempts, duration, etc.)
 # are stored in database and configurable via Admin Panel
@@ -84,11 +92,11 @@ CAPTCHA_ENABLED=true
 # SMTP CONFIGURATION (Optional - for sending emails)
 # ================================================================================
 # If not configured, OTP will be logged to console
-# SMTP_HOST="smtp.gmail.com"
-# SMTP_PORT=587
-# SMTP_USER="your-email@gmail.com"
-# SMTP_PASS="your-app-password"
-# EMAIL_FROM="noreply@yourdomain.com"
+SMTP_HOST="smtp.gmail.com"
+SMTP_PORT=587
+SMTP_USER="shgmnk1111@gmail.com"
+SMTP_PASS="mxwrwlpzznujzxrp"
+EMAIL_FROM="noreply@alandi.in"
 
 # ================================================================================
 # STORAGE CONFIGURATION (File Storage Optimization)
@@ -138,4 +146,44 @@ UPLOAD_PATH="./uploads"
 # GCS_BUCKET="your-bucket-name"
 # GCS_PROJECT_ID="your-project-id"
 # GCS_KEY_FILENAME="path/to/service-account-key.json"
+
+# ================================================================================
+# CASHFREE PAYMENT GATEWAY (SANDBOX/PRODUCTION)
+# ================================================================================
+# Set to true to enable Cashfree API calls (use sandbox until production-ready)
+CASHFREE_ENABLED=true
+# Cashfree App ID / Merchant ID
+CASHFREE_APP_ID="TEST101809669903adceae339230a7d566908101"
+# Cashfree Secret Key
+CASHFREE_SECRET_KEY="cfsk_ma_test_a4668c41035ea2dafad6e3f82a6ee881_e2f81cf1"
+# Environment: TEST or PROD
+CASHFREE_ENV="TEST"
+# Callback URL for Cashfree webhooks (used when PG_MODE=ONLINE)
+CASHFREE_CALLBACK_URL="https://centerable-harlan-slinkingly.ngrok-free.dev/api/webhooks/cashfree"
+
+# ================================================================================
+# RAZORPAY PAYMENT GATEWAY
+# ================================================================================
+RAZORPAY_ENABLED=true
+RAZORPAY_KEY_ID="rzp_test_S62UuaCBMdHfUd"
+RAZORPAY_KEY_SECRET="eO7o9F2B5GwkkKMvoQuJfMid"
+RAZORPAY_WEBHOOK_SECRET="Target@2026_test"
+
+# ================================================================================
+# SABPAISA PAYMENT GATEWAY
+# ================================================================================
+SABPAISA_ENABLED=true
+SABPAISA_PRODUCTION=false
+SABPAISA_CLIENT_CODE="DJ020"
+SABPAISA_USERNAME="DJL754@sp"
+SABPAISA_PASSWORD="4q3qhgmJNM4m"
+SABPAISA_AUTH_KEY="ISTrmmDC2bTvkxzlDRrVguVwetGS8xC/UFPsp6w+Itg= "
+SABPAISA_AUTH_IV="M+aUFgRMPq7ci+Cmoytp3KJ2GPBOwO72Z2Cjbr55zY7++pT9mLES2M5cIblnBtaX"
+SABPAISA_CALLBACK_URL="https://johnson-nonembryonal-unscabrously.ngrok-free.dev/api/sabpaisa/callback"
+FRONTEND_URL="http://localhost:5000"
+BACKEND_URL="https://johnson-nonembryonal-unscabrously.ngrok-free.dev"
+
+
+
+
 

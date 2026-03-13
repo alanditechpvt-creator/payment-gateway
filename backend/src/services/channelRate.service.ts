@@ -1,5 +1,6 @@
 import prisma from '../lib/prisma';
 import { AppError } from '../middleware/errorHandler';
+import { logger } from '../utils/logger';
 
 /**
  * New Channel-Based Rate Service
@@ -40,8 +41,8 @@ export const channelRateService = {
   },
   
   /**
-   * Detect channel from PG response payment method string
-   * Falls back to default channel if no match found
+   * Detect channel from PG response payment method string.
+   * If no card type matches, the "Other Payment Methods" (default) channel is used and its rate is applied.
    */
   async detectChannel(
     pgId: string, 
@@ -64,30 +65,39 @@ export const channelRateService = {
     
     // Try to match payment method with channel response codes
     const lowerPaymentMethod = rawPaymentMethod.toLowerCase().trim();
-    
+    const networkTokens = ['rupay', 'visa', 'master', 'mastercard', 'amex', 'diners', 'discover', 'jcb'];
+
+    const matches: { channel: typeof channels[0]; isNetworkSpecific: boolean }[] = [];
     for (const channel of channels) {
       if (!channel.pgResponseCodes) continue;
-      
       try {
         const responseCodes: string[] = JSON.parse(channel.pgResponseCodes);
-        const matched = responseCodes.some(code => 
+        const matched = responseCodes.some(code =>
           lowerPaymentMethod.includes(code.toLowerCase())
         );
-        
         if (matched) {
-          return channel;
+          const isNetworkSpecific = networkTokens.some(
+            token => lowerPaymentMethod.includes(token) && responseCodes.some(c => c.toLowerCase().includes(token))
+          );
+          matches.push({ channel, isNetworkSpecific });
         }
       } catch (error) {
         console.error(`Failed to parse pgResponseCodes for channel ${channel.id}:`, error);
       }
     }
-    
-    // No match found - use default channel
+
+    // Prefer network-specific channel (e.g. RuPay) over generic (e.g. "debit") so RuPay debit gets RuPay rate
+    const networkMatch = matches.find(m => m.isNetworkSpecific);
+    if (networkMatch) return networkMatch.channel;
+    if (matches.length > 0) return matches[0].channel;
+
+    // No card type matched - apply "Other Payment Methods" (default channel) rate
     return await this.getDefaultChannel(pgId, transactionType);
   },
   
   /**
-   * Get default fallback channel for unknown payment methods
+   * Get default fallback channel when no card type matches the PG response.
+   * Uses the channel marked "Other Payment Methods" (isDefault: true); if none, uses first active channel.
    */
   async getDefaultChannel(pgId: string, transactionType: 'PAYIN' | 'PAYOUT') {
     const defaultChannel = await prisma.transactionChannel.findFirst({
@@ -98,130 +108,166 @@ export const channelRateService = {
         isActive: true,
       }
     });
-    
-    if (!defaultChannel) {
+
+    if (defaultChannel) {
+      return defaultChannel;
+    }
+
+    // No "Other Payment Methods" channel - use first active channel so a rate is always applied
+    const fallback = await prisma.transactionChannel.findFirst({
+      where: {
+        pgId,
+        transactionType,
+        isActive: true,
+      },
+      orderBy: { code: 'asc' },
+    });
+
+    if (!fallback) {
       throw new AppError(
-        `No default ${transactionType} channel configured for this payment gateway`, 
+        `No ${transactionType} channel configured for this payment gateway`,
         500
       );
     }
-    
-    return defaultChannel;
+
+    return fallback;
   },
   
   // ===================== PAYIN RATE MANAGEMENT =====================
   
   /**
-   * Get payin rate for a user + channel combination
-   * Priority: User rate > Schema rate > Error
+   * Get payin rate for a user + channel (used for deduction).
+   * Priority: User override > Schema rate for this channel > channel base (baseCost).
    */
   async getPayinRate(userId: string, channelId: string): Promise<number> {
-    // Check for user-specific rate first
     const userRate = await prisma.userPayinRate.findUnique({
-      where: {
-        userId_channelId: { userId, channelId }
-      }
+      where: { userId_channelId: { userId, channelId } },
     });
-    
-    if (userRate && userRate.isEnabled) {
-      return userRate.payinRate;
-    }
-    
-    // Fall back to schema rate
+    if (userRate?.isEnabled) return Number(userRate.payinRate);
+
     const user = await prisma.user.findUnique({
       where: { id: userId },
-      select: { schemaId: true }
+      select: { schemaId: true },
     });
-    
-    if (!user?.schemaId) {
-      throw new AppError('User has no schema assigned', 400);
-    }
-    
+    if (!user?.schemaId) throw new AppError('User has no schema assigned', 400);
+
     const schemaRate = await prisma.schemaPayinRate.findUnique({
       where: {
-        schemaId_channelId: { 
-          schemaId: user.schemaId, 
-          channelId 
-        }
-      }
+        schemaId_channelId: { schemaId: user.schemaId, channelId },
+      },
     });
-    
-    if (!schemaRate || !schemaRate.isEnabled) {
-      throw new AppError('No rate configured for this channel', 400);
-    }
-    
-    return schemaRate.payinRate;
+    if (schemaRate?.isEnabled) return Number(schemaRate.payinRate);
+
+    const channel = await prisma.transactionChannel.findUnique({
+      where: { id: channelId },
+      select: { baseCost: true },
+    });
+    return channel ? Number(channel.baseCost ?? 0.02) : 0.02;
+  },
+
+  /**
+   * Get the rate to show and deduct for this user on this channel.
+   * User override (if any) else schema rate for this exact channel else schema default.
+   */
+  async getPayinRateForUser(userId: string, channelId: string): Promise<number> {
+    const userRate = await prisma.userPayinRate.findUnique({
+      where: { userId_channelId: { userId, channelId } },
+    });
+    if (userRate?.isEnabled) return Number(userRate.payinRate);
+
+    return this.getSchemaPayinRateOnly(userId, channelId);
+  },
+
+  /**
+   * Get schema payin rate only (no user override). Used for actual deduction so charge matches displayed schema rate.
+   */
+  async getSchemaPayinRateOnly(userId: string, channelId: string): Promise<number> {
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { schemaId: true },
+    });
+    if (!user?.schemaId) throw new AppError('User has no schema assigned', 400);
+
+    const [schemaRow, schema] = await Promise.all([
+      prisma.schemaPayinRate.findUnique({
+        where: { schemaId_channelId: { schemaId: user.schemaId, channelId } },
+      }),
+      prisma.schema.findUnique({
+        where: { id: user.schemaId },
+        select: { payinRate: true },
+      }),
+    ]);
+    const schemaDefaultRate = schema ? Number(schema.payinRate ?? 0.02) : 0.02;
+    if (schemaRow?.isEnabled) return Math.max(Number(schemaRow.payinRate), schemaDefaultRate);
+    return schemaDefaultRate;
   },
   
   /**
-   * Get all payin rates for a user (grouped by PG)
+   * Get all payin rates for a user (grouped by PG). Per-channel schema rates; base = channel.baseCost.
    */
   async getUserPayinRates(userId: string) {
     const user = await prisma.user.findUnique({
       where: { id: userId },
-      select: { schemaId: true }
+      select: { schemaId: true },
     });
-    
-    if (!user?.schemaId) {
-      throw new AppError('User has no schema assigned', 400);
-    }
-    
-    // Get schema rates
-    const schemaRates = await prisma.schemaPayinRate.findMany({
-      where: {
-        schemaId: user.schemaId,
-        isEnabled: true
-      },
-      include: {
-        transactionChannel: {
-          include: {
-            paymentGateway: true
-          }
+    if (!user?.schemaId) throw new AppError('User has no schema assigned', 400);
+
+    const [assignments, schemaRates, userRates, schema] = await Promise.all([
+      prisma.userPGAssignment.findMany({
+        where: { userId, isEnabled: true },
+        include: {
+          paymentGateway: {
+            include: {
+              transactionChannels: {
+                where: { isActive: true, transactionType: 'PAYIN' },
+              },
+            },
+          },
         },
-        paymentGateway: true
-      }
-    });
-    
-    // Get user-specific overrides
-    const userRates = await prisma.userPayinRate.findMany({
-      where: {
-        userId,
-        isEnabled: true
-      },
-      include: {
-        transactionChannel: {
-          include: {
-            paymentGateway: true
-          }
-        }
-      }
-    });
-    
-    // Merge and group by PG
+      }),
+      prisma.schemaPayinRate.findMany({
+        where: { schemaId: user.schemaId, isEnabled: true },
+        include: { transactionChannel: { include: { paymentGateway: true } } },
+      }),
+      prisma.userPayinRate.findMany({
+        where: { userId, isEnabled: true },
+        include: { transactionChannel: { include: { paymentGateway: true } } },
+      }),
+      prisma.schema.findUnique({
+        where: { id: user.schemaId },
+        select: { payinRate: true, code: true, name: true },
+      }),
+    ]);
+
+    const schemaDefaultRate = schema ? Number(schema.payinRate ?? 0.02) : 0.02;
+    logger.info(`[getUserPayinRates] userId=${userId} schemaId=${user.schemaId} schemaCode=${(schema as any)?.code} schemaDefault=${(schemaDefaultRate * 100).toFixed(1)}% schemaRatesCount=${schemaRates.length}`);
     const ratesByPG: Record<string, any[]> = {};
-    
-    schemaRates.forEach(schemaRate => {
-      const pgCode = schemaRate.transactionChannel.paymentGateway.code;
-      if (!ratesByPG[pgCode]) {
-        ratesByPG[pgCode] = [];
+    for (const a of assignments) {
+      const pg = a.paymentGateway;
+      const pgCode = pg.code;
+      if (!ratesByPG[pgCode]) ratesByPG[pgCode] = [];
+      for (const ch of pg.transactionChannels) {
+        const userOverride = userRates.find(ur => ur.channelId === ch.id);
+        // Exact channel only: schema row for this channelId. No "same type" / max across PGs.
+        const schemaRow = schemaRates.find(sr => sr.channelId === ch.id);
+        const schemaRate = schemaRow
+          ? Math.max(Number(schemaRow.payinRate), schemaDefaultRate)
+          : schemaDefaultRate;
+        const effectiveRate = userOverride ? Number(userOverride.payinRate) : schemaRate;
+
+        ratesByPG[pgCode].push({
+          channelId: ch.id,
+          channelCode: ch.code,
+          channelName: ch.name,
+          channelCategory: ch.category,
+          cardNetwork: (ch as any).cardNetwork ?? null,
+          cardType: (ch as any).cardType ?? null,
+          rate: effectiveRate,
+          isUserOverride: !!userOverride,
+          schemaRate,
+        });
       }
-      
-      // Check if user has override for this channel
-      const userOverride = userRates.find(
-        ur => ur.channelId === schemaRate.channelId
-      );
-      
-      ratesByPG[pgCode].push({
-        channelId: schemaRate.channelId,
-        channelCode: schemaRate.transactionChannel.code,
-        channelName: schemaRate.transactionChannel.name,
-        channelCategory: schemaRate.transactionChannel.category,
-        rate: userOverride ? userOverride.payinRate : schemaRate.payinRate,
-        isUserOverride: !!userOverride,
-        schemaRate: schemaRate.payinRate
-      });
-    });
-    
+    }
     return ratesByPG;
   },
   
@@ -257,10 +303,10 @@ export const channelRateService = {
       throw new AppError('You do not have permission to assign rates', 403);
     }
     
-    // Validate target user
+    // Validate target user (include schema for rate validation)
     const targetUser = await prisma.user.findUnique({
       where: { id: targetUserId },
-      select: { id: true, parentId: true, schemaId: true }
+      include: { schema: true }
     });
     
     if (!targetUser) {
@@ -282,28 +328,18 @@ export const channelRateService = {
       throw new AppError('Channel not found or inactive', 404);
     }
     
-    // Get schema rate for this channel
     if (!targetUser.schemaId) {
       throw new AppError('Target user has no schema assigned', 400);
     }
-    
-    const schemaRate = await prisma.schemaPayinRate.findUnique({
+    const schemaRow = await prisma.schemaPayinRate.findUnique({
       where: {
-        schemaId_channelId: {
-          schemaId: targetUser.schemaId,
-          channelId
-        }
-      }
+        schemaId_channelId: { schemaId: targetUser.schemaId, channelId },
+      },
     });
-    
-    if (!schemaRate) {
-      throw new AppError('No schema rate configured for this channel', 400);
-    }
-    
-    // Validate rate is >= schema rate
-    if (payinRate < schemaRate.payinRate) {
+    const minRate = schemaRow ? Number(schemaRow.payinRate) : Number(channel.baseCost ?? 0.02);
+    if (payinRate < minRate) {
       throw new AppError(
-        `Rate (${(payinRate * 100).toFixed(2)}%) cannot be lower than schema rate (${(schemaRate.payinRate * 100).toFixed(2)}%)`,
+        `Rate (${(payinRate * 100).toFixed(2)}%) cannot be lower than schema/channel rate (${(minRate * 100).toFixed(2)}%)`,
         400
       );
     }

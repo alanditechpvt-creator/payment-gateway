@@ -20,12 +20,14 @@ export const channelAdminController = {
    */
   async listChannels(req: Request, res: Response, next: NextFunction) {
     try {
-      const { pgId, transactionType, category } = req.query;
+      const { pgId, transactionType, category, activeOnly } = req.query;
       
       const where: any = {};
       if (pgId) where.pgId = pgId as string;
       if (transactionType) where.transactionType = transactionType as string;
       if (category) where.category = category as string;
+      // When setting schema rates, only list channels that are enabled at PG level
+      if (activeOnly === 'true' || activeOnly === '1') where.isActive = true;
       
       const channels = await prisma.transactionChannel.findMany({
         where,
@@ -392,18 +394,63 @@ export const channelAdminController = {
             rates: []
           };
         }
+        const channelBase = Number(rate.transactionChannel.baseCost ?? 0.02);
         ratesByPG[pgCode].rates.push({
           id: rate.id,
+          pgId: rate.pgId,
           channelId: rate.channelId,
           channelCode: rate.transactionChannel.code,
           channelName: rate.transactionChannel.name,
           channelCategory: rate.transactionChannel.category,
+          baseRate: channelBase,
+          baseRateDisplay: `${(channelBase * 100).toFixed(2)}%`,
           payinRate: rate.payinRate,
           payinRateDisplay: `${(rate.payinRate * 100).toFixed(2)}%`,
-          isEnabled: rate.isEnabled
+          isEnabled: rate.isEnabled,
         });
       });
-      
+
+      // When no per-channel rates exist, show schema default applied to all channels
+      if (rates.length === 0) {
+        const defaultPayinRate = Number(schema.payinRate ?? 0.02);
+        const channels = await prisma.transactionChannel.findMany({
+          where: { isActive: true },
+          include: {
+            paymentGateway: {
+              select: { id: true, name: true, code: true }
+            }
+          },
+          orderBy: [
+            { paymentGateway: { name: 'asc' } },
+            { category: 'asc' },
+            { name: 'asc' }
+          ]
+        });
+        channels.forEach(ch => {
+          const pgCode = ch.paymentGateway.code;
+          if (!ratesByPG[pgCode]) {
+            ratesByPG[pgCode] = {
+              paymentGateway: ch.paymentGateway,
+              rates: []
+            };
+          }
+          const channelBase = Number(ch.baseCost ?? 0.02);
+          ratesByPG[pgCode].rates.push({
+            id: null,
+            pgId: ch.pgId,
+            channelId: ch.id,
+            channelCode: ch.code,
+            channelName: ch.name,
+            channelCategory: ch.category,
+            baseRate: channelBase,
+            baseRateDisplay: `${(channelBase * 100).toFixed(2)}%`,
+            payinRate: defaultPayinRate,
+            payinRateDisplay: `${(defaultPayinRate * 100).toFixed(2)}% (schema default)`,
+            isEnabled: true,
+          });
+        });
+      }
+
       res.json({
         success: true,
         data: {
@@ -425,39 +472,44 @@ export const channelAdminController = {
     try {
       const { schemaId } = req.params;
       const { channelId, payinRate, isEnabled } = req.body;
-      
+
       if (!channelId || payinRate === undefined) {
         throw new AppError('Missing required fields', 400);
       }
-      
-      // Validate schema
+
       const schema = await prisma.schema.findUnique({
-        where: { id: schemaId }
+        where: { id: schemaId },
       });
-      
-      if (!schema) {
-        throw new AppError('Schema not found', 404);
-      }
-      
-      // Validate channel
+      if (!schema) throw new AppError('Schema not found', 404);
+
       const channel = await prisma.transactionChannel.findUnique({
-        where: { id: channelId }
+        where: { id: channelId },
       });
-      
       if (!channel || channel.transactionType !== 'PAYIN') {
         throw new AppError('Invalid payin channel', 400);
       }
-      
-      // Validate rate is >= channel base cost (with small epsilon for floating point comparison)
-      const epsilon = 0.0001; // 0.01% tolerance
-      if (payinRate < (channel.baseCost - epsilon)) {
+
+      const epsilon = 0.0001;
+      const channelBase = Number(channel.baseCost ?? 0.02);
+      if (payinRate < channelBase - epsilon) {
         throw new AppError(
-          `Rate (${(payinRate * 100).toFixed(2)}%) cannot be lower than channel base cost (${(channel.baseCost * 100).toFixed(2)}%)`,
+          `Rate (${(payinRate * 100).toFixed(2)}%) cannot be lower than channel base (${(channelBase * 100).toFixed(2)}%)`,
           400
         );
       }
-      
-      // Create or update rate
+
+      const updateData = {
+        payinRate,
+        isEnabled: isEnabled !== undefined ? isEnabled : true,
+      };
+      const createData = {
+        schemaId,
+        channelId,
+        pgId: channel.pgId,
+        payinRate,
+        isEnabled: isEnabled !== undefined ? isEnabled : true,
+      };
+
       const rate = await prisma.schemaPayinRate.upsert({
         where: {
           schemaId_channelId: {
@@ -465,17 +517,8 @@ export const channelAdminController = {
             channelId
           }
         },
-        update: {
-          payinRate,
-          isEnabled: isEnabled !== undefined ? isEnabled : true
-        },
-        create: {
-          schemaId,
-          channelId,
-          pgId: channel.pgId,
-          payinRate,
-          isEnabled: isEnabled !== undefined ? isEnabled : true
-        },
+        update: updateData,
+        create: createData,
         include: {
           transactionChannel: {
             include: {

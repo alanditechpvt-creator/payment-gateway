@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { motion } from 'framer-motion';
 import { useQuery } from '@tanstack/react-query';
 import { ledgerApi } from '@/lib/api';
@@ -41,6 +41,7 @@ export default function LedgerPage() {
     endDate: '',
   });
   const [showFilters, setShowFilters] = useState(false);
+  const exportInProgressRef = useRef(false);
 
   const { data, isLoading, refetch } = useQuery({
     queryKey: ['my-ledger', page, filters],
@@ -58,28 +59,32 @@ export default function LedgerPage() {
   const summary = ledgerData?.summary || {};
   const pagination = ledgerData?.pagination || { total: 0, totalPages: 1 };
 
-  const handleExport = async (format: 'csv' | 'json') => {
+  const handleExport = async (exportFormat: 'csv' | 'json') => {
+    if (exportInProgressRef.current) return;
+    exportInProgressRef.current = true;
     try {
       const response = await ledgerApi.exportMyLedger({
-        format,
+        format: exportFormat,
         startDate: filters.startDate || undefined,
         endDate: filters.endDate || undefined,
       });
       
       const blob = new Blob([response.data], { 
-        type: format === 'csv' ? 'text/csv' : 'application/json' 
+        type: exportFormat === 'csv' ? 'text/csv' : 'application/json'
       });
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `ledger_${format === 'csv' ? 'export' : 'data'}.${format}`;
+      a.download = `ledger_${exportFormat === 'csv' ? 'export' : 'data'}.${exportFormat}`;
       document.body.appendChild(a);
       a.click();
-      window.URL.revokeObjectURL(url);
       document.body.removeChild(a);
-      toast.success(`Ledger exported as ${format.toUpperCase()}`);
+      window.URL.revokeObjectURL(url);
+      toast.success(`Ledger exported as ${exportFormat.toUpperCase()}`);
     } catch (error) {
       toast.error('Failed to export ledger');
+    } finally {
+      exportInProgressRef.current = false;
     }
   };
 
@@ -135,19 +140,21 @@ export default function LedgerPage() {
             Filters
           </button>
           <div className="relative group">
-            <button className="px-4 py-2 rounded-xl bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 flex items-center gap-2">
+            <button type="button" className="px-4 py-2 rounded-xl bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 flex items-center gap-2">
               <ArrowDownTrayIcon className="w-5 h-5" />
               Export
             </button>
             <div className="absolute right-0 mt-2 w-40 bg-[#1a1a2e] rounded-xl border border-white/10 shadow-xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-10">
               <button
-                onClick={() => handleExport('csv')}
+                type="button"
+                onClick={(e) => { e.preventDefault(); e.stopPropagation(); handleExport('csv'); }}
                 className="w-full px-4 py-2 text-left text-sm hover:bg-white/5 rounded-t-xl"
               >
                 Export as CSV
               </button>
               <button
-                onClick={() => handleExport('json')}
+                type="button"
+                onClick={(e) => { e.preventDefault(); e.stopPropagation(); handleExport('json'); }}
                 className="w-full px-4 py-2 text-left text-sm hover:bg-white/5 rounded-b-xl"
               >
                 Export as JSON

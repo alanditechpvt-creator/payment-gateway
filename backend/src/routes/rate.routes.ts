@@ -10,6 +10,9 @@ router.use(authenticate);
 // Get my rates (what I'm charged for each PG)
 router.get('/my-rates', rateController.getMyRates);
 
+// Get my payin rates by PG and channel (schema-based; for (i) modal)
+router.get('/my-payin-rates', rateController.getMyPayinRates);
+
 // Get my base rate for a specific PG
 router.get('/my-base-rate/:pgId', rateController.getMyBaseRate);
 
@@ -18,6 +21,12 @@ router.get('/available-pgs', rateController.getAvailablePGsForAssignment);
 
 // Get children with their rates
 router.get('/children', rateController.getChildrenRates);
+
+// Get PG assignments for a specific user (admin: any user; others: direct child only)
+router.get('/user/:userId/assignments', rateController.getRatesForUser);
+
+// Commission stats (earned by me, day/month, from downline)
+router.get('/commission-stats', rateController.getCommissionStats);
 
 // Preview commission calculation
 router.post('/preview-commissions', rateController.previewCommissions);

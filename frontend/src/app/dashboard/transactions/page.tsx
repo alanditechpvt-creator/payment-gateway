@@ -1,10 +1,11 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useCallback, useRef } from 'react';
 import { motion } from 'framer-motion';
 import { useQuery } from '@tanstack/react-query';
 import { transactionApi, pgApi } from '@/lib/api';
 import { format } from 'date-fns';
+import toast from 'react-hot-toast';
 import {
   ArrowUpIcon,
   ArrowDownIcon,
@@ -17,6 +18,11 @@ import {
   CreditCardIcon,
   Squares2X2Icon,
   ListBulletIcon,
+  InformationCircleIcon,
+  XMarkIcon,
+  ArrowDownTrayIcon,
+  ChevronLeftIcon,
+  ChevronRightIcon,
 } from '@heroicons/react/24/outline';
 
 const statusColors: Record<string, string> = {
@@ -33,6 +39,72 @@ const statusIcons: Record<string, React.ComponentType<{ className?: string }>> =
   PROCESSING: ArrowPathIcon,
 };
 
+function getPaymentIdFromTx(tx: any): string {
+  if (!tx?.pgResponse) return '';
+  try {
+    const pr = typeof tx.pgResponse === 'string' ? JSON.parse(tx.pgResponse) : tx.pgResponse;
+    return (
+      pr?.PAYMENT_ID ||
+      pr?.ORDERSTATUS?.PAYMENT_ID ||
+      pr?.payment_id ||
+      pr?.paymentId ||
+      pr?.razorpay_payment_id ||
+      pr?.bankTxnId ||
+      pr?.BankTxnId ||
+      pr?.sabpaisaTxnId ||
+      pr?.id ||
+      ''
+    );
+  } catch {
+    return '';
+  }
+}
+
+function escapeCsvCell(v: unknown): string {
+  if (v == null) return '';
+  const s = String(v);
+  if (s.includes('"') || s.includes(',') || s.includes('\n') || s.includes('\r')) {
+    return '"' + s.replace(/"/g, '""') + '"';
+  }
+  return s;
+}
+
+function buildTransactionsCsv(txList: any[]): string {
+  const headers = [
+    'Transaction ID',
+    'Payment ID',
+    'Gateway',
+    'Type',
+    'Amount',
+    'Status',
+    'Date',
+    'Customer Name',
+    'Customer Email',
+    'PG Charges',
+    'Commission',
+    'Net Amount',
+    'Beneficiary Name',
+  ];
+  const rows = txList.map((tx: any) => [
+    tx.transactionId ?? '',
+    getPaymentIdFromTx(tx),
+    tx.paymentGateway?.name ?? '',
+    tx.type ?? '',
+    tx.amount ?? '',
+    tx.status ?? '',
+    tx.createdAt ? format(new Date(tx.createdAt), 'yyyy-MM-dd HH:mm:ss') : '',
+    tx.customerName ?? '',
+    tx.customerEmail ?? '',
+    tx.pgCharges ?? '',
+    tx.platformCommission ?? '',
+    tx.netAmount ?? '',
+    tx.beneficiaryName ?? '',
+  ]);
+  const headerLine = headers.map(escapeCsvCell).join(',');
+  const dataLines = rows.map((row) => row.map(escapeCsvCell).join(','));
+  return [headerLine, ...dataLines].join('\r\n');
+}
+
 export default function TransactionsPage() {
   const [search, setSearch] = useState('');
   const [typeFilter, setTypeFilter] = useState<string>('');
@@ -40,8 +112,11 @@ export default function TransactionsPage() {
   const [pgFilter, setPgFilter] = useState<string>('');
   const [page, setPage] = useState(1);
   const [viewMode, setViewMode] = useState<'list' | 'grouped'>('list');
+  const [infoTransactionId, setInfoTransactionId] = useState<string | null>(null);
+  const [exporting, setExporting] = useState(false);
+  const exportInProgressRef = useRef(false);
 
-  const { data, isLoading, refetch } = useQuery({
+  const { data, isLoading } = useQuery({
     queryKey: ['transactions', page, typeFilter, statusFilter, pgFilter, search],
     queryFn: () => transactionApi.getTransactions({
       page,
@@ -59,8 +134,54 @@ export default function TransactionsPage() {
   });
 
   const transactions = data?.data?.data || [];
-  const pagination = data?.data?.pagination || { total: 0, pages: 1 };
+  const pagination = data?.data?.pagination || { total: 0, totalPages: 1, page: 1, limit: 20 };
+  const totalPages = pagination.totalPages ?? (pagination.pages ?? 1);
+  const total = pagination.total ?? 0;
+  const from = total === 0 ? 0 : (pagination.page - 1) * pagination.limit + 1;
+  const to = Math.min(pagination.page * pagination.limit, total);
   const availablePGs = pgsData?.data?.data || pgsData?.data || [];
+
+  const { data: txDetailData } = useQuery({
+    queryKey: ['transaction', infoTransactionId],
+    queryFn: () => transactionApi.getTransactionById(infoTransactionId!),
+    enabled: !!infoTransactionId,
+  });
+  const txDetail = txDetailData?.data?.data;
+
+  const handleExport = useCallback(async () => {
+    if (exportInProgressRef.current) return;
+    exportInProgressRef.current = true;
+    setExporting(true);
+    try {
+      const res = await transactionApi.getTransactions({
+        page: 1,
+        limit: 10000,
+        type: typeFilter || undefined,
+        status: statusFilter || undefined,
+        pgId: pgFilter || undefined,
+        search: search || undefined,
+      });
+      const list = res?.data?.data ?? [];
+      if (list.length === 0) {
+        toast.error('No transactions to export');
+        return;
+      }
+      const csv = buildTransactionsCsv(list);
+      const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `transactions_${format(new Date(), 'yyyy-MM-dd_HH-mm')}.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+      toast.success(`Exported ${list.length} transaction(s)`);
+    } catch (e) {
+      toast.error('Export failed');
+    } finally {
+      setExporting(false);
+      exportInProgressRef.current = false;
+    }
+  }, [typeFilter, statusFilter, pgFilter, search]);
 
   // Group transactions by PG for grouped view
   const groupedByPG = transactions.reduce((acc: any, tx: any) => {
@@ -115,6 +236,20 @@ export default function TransactionsPage() {
           >
             <ArrowPathIcon className="w-4 h-4" />
             Refresh
+          </button>
+          <button
+            type="button"
+            onClick={(e) => { e.preventDefault(); e.stopPropagation(); handleExport(); }}
+            disabled={exporting || total === 0}
+            className="btn-secondary flex items-center gap-2 disabled:opacity-50"
+            title="Export transactions (current filters) as CSV"
+          >
+            {exporting ? (
+              <ArrowPathIcon className="w-4 h-4 animate-spin" />
+            ) : (
+              <ArrowDownTrayIcon className="w-4 h-4" />
+            )}
+            Export CSV
           </button>
         </div>
       </div>
@@ -296,20 +431,26 @@ export default function TransactionsPage() {
               <thead className="bg-white/5">
                 <tr className="text-left text-white/50 text-sm">
                   <th className="px-6 py-4 font-medium">Transaction ID</th>
+                  <th className="px-6 py-4 font-medium">Payment ID</th>
                   <th className="px-6 py-4 font-medium">Gateway</th>
                   <th className="px-6 py-4 font-medium">Type</th>
                   <th className="px-6 py-4 font-medium">Amount</th>
                   <th className="px-6 py-4 font-medium">Status</th>
                   <th className="px-6 py-4 font-medium">Date</th>
+                  <th className="px-6 py-4 font-medium w-12"></th>
                 </tr>
               </thead>
               <tbody>
                 {transactions.map((tx: any) => {
                   const StatusIcon = statusIcons[tx.status] || ClockIcon;
+                  const paymentId = getPaymentIdFromTx(tx);
                   return (
                     <tr key={tx.id} className="border-t border-white/5 hover:bg-white/5 transition-colors">
                       <td className="px-6 py-4">
                         <span className="font-mono text-sm">{tx.transactionId}</span>
+                      </td>
+                      <td className="px-6 py-4">
+                        <span className="font-mono text-sm text-white/70">{paymentId || '–'}</span>
                       </td>
                       <td className="px-6 py-4">
                         <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-primary-500/10 text-primary-400 text-xs font-medium">
@@ -347,6 +488,16 @@ export default function TransactionsPage() {
                       <td className="px-6 py-4 text-white/50">
                         {format(new Date(tx.createdAt), 'MMM d, yyyy HH:mm')}
                       </td>
+                      <td className="px-6 py-4">
+                        <button
+                          type="button"
+                          onClick={() => setInfoTransactionId(tx.transactionId)}
+                          className="p-1.5 rounded-lg hover:bg-white/10 text-white/50 hover:text-white"
+                          title="View details"
+                        >
+                          <InformationCircleIcon className="w-5 h-5" />
+                        </button>
+                      </td>
                     </tr>
                   );
                 })}
@@ -354,31 +505,126 @@ export default function TransactionsPage() {
             </table>
           </div>
 
-          {/* Pagination */}
-          {pagination.pages > 1 && (
-            <div className="flex items-center justify-between px-6 py-4 border-t border-white/5">
-              <p className="text-sm text-white/50">
-                Showing page {page} of {pagination.pages} ({pagination.total} total)
-              </p>
-              <div className="flex gap-2">
-                <button
-                  onClick={() => setPage(p => Math.max(1, p - 1))}
-                  disabled={page === 1}
-                  className="px-3 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                >
-                Previous
-              </button>
-              <button
-                onClick={() => setPage(p => Math.min(pagination.pages, p + 1))}
-                disabled={page === pagination.pages}
-                className="px-3 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          {/* Transaction details modal */}
+          {infoTransactionId && (
+            <div
+              className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4"
+              onClick={() => setInfoTransactionId(null)}
+            >
+              <div
+                className="bg-slate-900 rounded-2xl border border-white/10 shadow-xl w-full max-w-2xl max-h-[90vh] overflow-hidden flex flex-col"
+                onClick={(e) => e.stopPropagation()}
               >
-                Next
-              </button>
+                <div className="flex items-center justify-between p-4 border-b border-white/10">
+                  <h3 className="text-lg font-semibold text-white">Transaction details</h3>
+                  <button
+                    type="button"
+                    onClick={() => setInfoTransactionId(null)}
+                    className="p-2 rounded-lg hover:bg-white/10 text-white/70"
+                  >
+                    <XMarkIcon className="w-5 h-5" />
+                  </button>
+                </div>
+                <div className="overflow-y-auto p-4 space-y-4">
+                  {!txDetail && txDetailData !== undefined ? (
+                    <div className="text-center py-8 text-white/50">Loading…</div>
+                  ) : txDetail ? (
+                    <>
+                      <div className="grid grid-cols-2 gap-3 text-sm">
+                        <div className="text-white/50">Transaction ID</div>
+                        <div className="font-mono text-white">{txDetail.transactionId}</div>
+                        {(() => {
+                          let paymentId = '';
+                          if (txDetail.pgResponse) {
+                            try {
+                              const pr = typeof txDetail.pgResponse === 'string' ? JSON.parse(txDetail.pgResponse) : txDetail.pgResponse;
+                              paymentId = pr?.PAYMENT_ID || pr?.ORDERSTATUS?.PAYMENT_ID || pr?.payment_id || pr?.paymentId || pr?.razorpay_payment_id || pr?.bankTxnId || pr?.BankTxnId || pr?.sabpaisaTxnId || pr?.id || '';
+                            } catch { /* ignore */ }
+                          }
+                          return paymentId ? (
+                            <>
+                              <div className="text-white/50">Payment ID (PG)</div>
+                              <div className="font-mono text-white">{paymentId}</div>
+                            </>
+                          ) : null;
+                        })()}
+                        <div className="text-white/50">Gateway</div>
+                        <div className="text-white">{txDetail.paymentGateway?.name || '-'}</div>
+                        <div className="text-white/50">Type</div>
+                        <div className="text-white">{txDetail.type}</div>
+                        <div className="text-white/50">Amount</div>
+                        <div className="font-semibold text-white">₹{Number(txDetail.amount)?.toLocaleString()}</div>
+                        <div className="text-white/50">Status</div>
+                        <div className="text-white">{txDetail.status}</div>
+                        <div className="text-white/50">Date</div>
+                        <div className="text-white">{format(new Date(txDetail.createdAt), 'PPpp')}</div>
+                        <div className="text-white/50">Card / Channel</div>
+                        <div className="text-white">
+                          {txDetail.transactionChannel
+                            ? `${txDetail.transactionChannel.name || txDetail.transactionChannel.code || '-'} (${txDetail.transactionChannel.code || ''})`
+                            : txDetail.rawPaymentMethod || '-'}
+                        </div>
+                        <div className="text-white/50">PG charges</div>
+                        <div className="text-white">₹{Number(txDetail.pgCharges ?? 0).toFixed(2)}</div>
+                        <div className="text-white/50">Net amount</div>
+                        <div className="text-emerald-400 font-medium">₹{Number(txDetail.netAmount ?? 0).toFixed(2)}</div>
+                      </div>
+                      {txDetail.pgResponse && (
+                        <div>
+                          <h4 className="text-white/70 font-medium mb-2">PG response</h4>
+                          <pre className="p-3 bg-black/30 rounded-lg text-xs text-white/80 overflow-x-auto max-h-48 overflow-y-auto">
+                            {(() => {
+                              try {
+                                return JSON.stringify(JSON.parse(txDetail.pgResponse), null, 2);
+                              } catch {
+                                return String(txDetail.pgResponse);
+                              }
+                            })()}
+                          </pre>
+                        </div>
+                      )}
+                    </>
+                  ) : (
+                    <div className="text-center py-8 text-white/50">Could not load transaction.</div>
+                  )}
+                </div>
+              </div>
             </div>
-          </div>
-        )}
+          )}
+
         </motion.div>
+      )}
+
+      {/* Pagination — shown for both list and grouped view */}
+      {!isLoading && total > 0 && totalPages > 1 && (
+        <div className="flex flex-col sm:flex-row items-center justify-between gap-4 px-4 py-4 glass rounded-2xl">
+          <p className="text-sm text-white/50">
+            Showing {from}–{to} of {total}
+          </p>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setPage((p) => Math.max(1, p - 1))}
+              disabled={page <= 1}
+              className="p-2 rounded-lg bg-white/5 text-white/70 hover:bg-white/10 disabled:opacity-40 disabled:pointer-events-none transition-colors"
+              aria-label="Previous page"
+            >
+              <ChevronLeftIcon className="w-5 h-5" />
+            </button>
+            <span className="text-sm text-white/70 px-2">
+              Page {page} of {totalPages}
+            </span>
+            <button
+              type="button"
+              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+              disabled={page >= totalPages}
+              className="p-2 rounded-lg bg-white/5 text-white/70 hover:bg-white/10 disabled:opacity-40 disabled:pointer-events-none transition-colors"
+              aria-label="Next page"
+            >
+              <ChevronRightIcon className="w-5 h-5" />
+            </button>
+          </div>
+        </div>
       )}
     </div>
   );

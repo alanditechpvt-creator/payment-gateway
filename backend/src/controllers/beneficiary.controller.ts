@@ -14,12 +14,17 @@ export const beneficiaryController = {
 
   async getBeneficiaries(req: AuthRequest, res: Response, next: NextFunction) {
     try {
+      const page = req.query.page ? parseInt(String(req.query.page), 10) : undefined;
+      const limit = req.query.limit ? parseInt(String(req.query.limit), 10) : undefined;
       const params = {
-        search: req.query.search as string,
+        search: (req.query.search as string)?.trim() || undefined,
         isActive: req.query.isActive === 'true' ? true : req.query.isActive === 'false' ? false : undefined,
+        profileId: req.query.profileId as string | undefined,
+        page,
+        limit,
       };
-      const beneficiaries = await beneficiaryService.getBeneficiaries(req.user!.userId, params);
-      res.json({ success: true, data: beneficiaries });
+      const result = await beneficiaryService.getBeneficiaries(req.user!.userId, params);
+      res.json({ success: true, data: result.data, total: result.total, page: result.page, limit: result.limit });
     } catch (error) {
       next(error);
     }

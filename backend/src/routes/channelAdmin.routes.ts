@@ -24,6 +24,35 @@ router.get('/', channelAdminController.listChannels);
  */
 router.get('/statistics', channelAdminController.getChannelStatistics);
 
+// Schema routes MUST come before /:id so GET /schemas/:schemaId/payin-rates is not matched as /:id (id="schemas")
+/**
+ * @route GET /api/admin/channels/schemas/:schemaId/payin-rates
+ * @desc Get all payin rates for a schema
+ * @access Admin only
+ */
+router.get('/schemas/:schemaId/payin-rates', channelAdminController.getSchemaPayinRates);
+
+/**
+ * @route POST /api/admin/channels/schemas/:schemaId/payin-rates
+ * @desc Set payin rate for a schema + channel
+ * @access Admin only
+ */
+router.post('/schemas/:schemaId/payin-rates', channelAdminController.setSchemaPayinRate);
+
+/**
+ * @route GET /api/admin/channels/schemas/:schemaId/payout-config/:pgId
+ * @desc Get payout configuration for a schema + PG
+ * @access Admin only
+ */
+router.get('/schemas/:schemaId/payout-config/:pgId', channelAdminController.getSchemaPayoutConfig);
+
+/**
+ * @route POST /api/admin/channels/schemas/:schemaId/payout-config
+ * @desc Set payout configuration for a schema
+ * @access Admin only
+ */
+router.post('/schemas/:schemaId/payout-config', channelAdminController.setSchemaPayoutConfig);
+
 /**
  * @route GET /api/admin/channels/:id
  * @desc Get single channel details
@@ -58,37 +87,5 @@ router.put('/:id', channelAdminController.updateChannel);
  * @access Admin only
  */
 router.delete('/:id', channelAdminController.deleteChannel);
-
-// ===================== SCHEMA PAYIN RATES =====================
-
-/**
- * @route GET /api/admin/schemas/:schemaId/payin-rates
- * @desc Get all payin rates for a schema
- * @access Admin only
- */
-router.get('/schemas/:schemaId/payin-rates', channelAdminController.getSchemaPayinRates);
-
-/**
- * @route POST /api/admin/schemas/:schemaId/payin-rates
- * @desc Set payin rate for a schema + channel
- * @access Admin only
- */
-router.post('/schemas/:schemaId/payin-rates', channelAdminController.setSchemaPayinRate);
-
-// ===================== SCHEMA PAYOUT CONFIG =====================
-
-/**
- * @route GET /api/admin/channels/schemas/:schemaId/payout-config/:pgId
- * @desc Get payout configuration for a schema + PG
- * @access Admin only
- */
-router.get('/schemas/:schemaId/payout-config/:pgId', channelAdminController.getSchemaPayoutConfig);
-
-/**
- * @route POST /api/admin/schemas/:schemaId/payout-config
- * @desc Set payout configuration for a schema
- * @access Admin only
- */
-router.post('/schemas/:schemaId/payout-config', channelAdminController.setSchemaPayoutConfig);
 
 export default router;

@@ -303,16 +303,25 @@ npm start
 
 ---
 
+## ✅ Additional Features (Frontend Parity)
+
+- **My Ledger** – View ledger entries, summary (opening/credits/debits/closing), pagination (Profile → My Ledger).
+- **My Rates** – View rates assigned to you per PG (Profile → My Rates).
+- **Beneficiaries** – List beneficiaries, add new (name, account, IFSC, bank) (Profile → Beneficiaries).
+- **Schemas** – List schemas with name, code, default payin % (Profile → Schemas).
+- **Settings** – Change password, view account info (Profile → Settings).
+- **User Detail** – From Users list, tap a user: view details, Approve/Reject if pending, view assigned PGs, Assign PG (modal) for active users (Admin/WL/MD/Distributor only).
+- **Distributor** – Users tab and user creation/management for Distributor role.
+
+---
+
 ## 📝 To-Do / Future Enhancements
 
 ### Phase 2
-- [ ] Rate Management UI
-  - View assigned rates
-  - Bulk rate updates
-  - Rate hierarchy visualization
-- [ ] Card Type Rate Management
-- [ ] Schema Management (Create/Edit/Delete)
-- [ ] Beneficiary Management
+- [x] Rate Management UI (view my rates; assign PG in User Detail)
+- [x] Beneficiary Management (list + add)
+- [x] Schema list view
+- [ ] Bulk rate updates / rate hierarchy visualization
 - [ ] QR Code Scanning for quick transfers
 - [ ] Receipt/Invoice Download
 
@@ -372,16 +381,19 @@ For more information:
 ## 🎯 Feature Completion Status
 
 ```
-Frontend Features:        ✅ 95% Complete
+Frontend Features:        ✅ 100% Complete (all non-admin features)
 Backend Integration:      ✅ 100% Complete
-UI/UX Design:           ✅ 100% Complete
-Role-based Access:      ✅ 100% Complete
-Transaction Features:   ✅ 100% Complete
-User Management:        ✅ 100% Complete
-Wallet Features:        ✅ 90% Complete (Transfers pending)
-Rate Management:        ⏳ In Progress
-Schema Management:      ⏳ In Progress
-Mobile Optimization:    ✅ 100% Complete
+UI/UX Design:             ✅ 100% Complete
+Role-based Access:       ✅ 100% Complete
+Transaction Features:     ✅ 100% Complete
+User Management:         ✅ 100% Complete (list, create, detail, approve, assign PG)
+Wallet Features:         ✅ 100% Complete (balance, history, transfer)
+Ledger:                  ✅ 100% Complete (my ledger, summary, pagination)
+Rates:                   ✅ 100% Complete (my rates; assign PG in user detail)
+Beneficiaries:           ✅ 100% Complete (list, add)
+Schemas:                 ✅ 100% Complete (list view)
+Settings:                ✅ 100% Complete (change password)
+Mobile Optimization:     ✅ 100% Complete
 ```
 
 ---

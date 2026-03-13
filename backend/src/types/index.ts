@@ -33,7 +33,11 @@ export interface PaginatedResponse<T> {
 
 export interface CreateUserDTO {
   email: string;
-  password: string;
+  /**
+   * Optional: For admin/parent-created users, password is set during onboarding.
+   * If not provided, the service will generate a random temporary password.
+   */
+  password?: string;
   role: UserRole;
   firstName?: string;
   lastName?: string;
@@ -89,6 +93,8 @@ export interface CreateSchemaDTO {
   description?: string;
   applicableRoles: UserRole[];
   isDefault?: boolean;
+  /** Single rate for this schema (e.g. 0.015 = 1.5%). Applied to all channels. */
+  payinRate?: number;
 }
 
 // DEPRECATED: Use channel-based SchemaPayinRate and SchemaPayoutConfig models
@@ -109,7 +115,6 @@ export interface CreatePGDTO {
   merchantId?: string;
   webhookSecret?: string;
   configuration?: Record<string, any>;
-  baseRate: number;
   minAmount?: number;
   maxAmount?: number;
   supportedTypes?: TransactionType[];

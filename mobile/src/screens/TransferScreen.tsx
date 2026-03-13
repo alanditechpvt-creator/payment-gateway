@@ -21,10 +21,12 @@ import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 
 type Props = {
   navigation: NativeStackNavigationProp<any>;
+  route: { params?: { toUserId?: string } };
 };
 
-export default function TransferScreen({ navigation }: Props) {
-  const [toUserId, setToUserId] = useState('');
+export default function TransferScreen({ navigation, route }: Props) {
+  const initialToUserId = route?.params?.toUserId || '';
+  const [toUserId, setToUserId] = useState(initialToUserId);
   const [toUserName, setToUserName] = useState('');
   const [amount, setAmount] = useState('');
   const [description, setDescription] = useState('');

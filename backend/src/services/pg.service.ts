@@ -2,6 +2,21 @@ import prisma from '../lib/prisma';
 import { CreatePGDTO, PaginationParams } from '../types';
 import { AppError } from '../middleware/errorHandler';
 import { Decimal } from '@prisma/client/runtime/library';
+import { channelRateService } from './channelRate.service';
+import { logger } from '../utils/logger';
+
+function normalizeSupportedTypes(val: string | null | undefined): string {
+  if (val == null || val === '') return 'PAYIN, PAYOUT';
+  try {
+    const parsed = JSON.parse(val);
+    if (Array.isArray(parsed)) return parsed.map((t: string) => String(t).trim()).join(', ');
+  } catch {
+    // not JSON
+  }
+  const cleaned = val.replace(/["'[\]]/g, '').trim();
+  if (cleaned) return cleaned.split(',').map((t) => t.trim()).filter(Boolean).join(', ');
+  return 'PAYIN, PAYOUT';
+}
 
 export const pgService = {
   async createPG(data: CreatePGDTO) {
@@ -18,10 +33,9 @@ export const pgService = {
         supportedTypes: JSON.stringify(data.supportedTypes || ['PAYIN', 'PAYOUT']),
       },
     });
-    
     return pg;
   },
-  
+
   async updatePG(pgId: string, data: Partial<CreatePGDTO> & { isActive?: boolean }) {
     const pg = await prisma.paymentGateway.update({
       where: { id: pgId },
@@ -34,10 +48,9 @@ export const pgService = {
         webhookSecret: data.webhookSecret,
         configuration: data.configuration ? JSON.stringify(data.configuration) : undefined,
         isActive: data.isActive,
-        supportedTypes: data.supportedTypes ? JSON.stringify(data.supportedTypes) : undefined,
+        supportedTypes: data.supportedTypes == null ? undefined : (Array.isArray(data.supportedTypes) ? JSON.stringify(data.supportedTypes) : String(data.supportedTypes).trim()),
       },
     });
-    
     return pg;
   },
   
@@ -49,10 +62,14 @@ export const pgService = {
     }
     
     if (!params) {
-      return prisma.paymentGateway.findMany({
+      const pgs = await prisma.paymentGateway.findMany({
         where,
         orderBy: { name: 'asc' },
       });
+      return pgs.map((pg) => ({
+        ...pg,
+        supportedTypes: normalizeSupportedTypes(pg.supportedTypes),
+      }));
     }
     
     const [pgs, total] = await Promise.all([
@@ -64,9 +81,14 @@ export const pgService = {
       }),
       prisma.paymentGateway.count({ where }),
     ]);
-    
+
+    const data = pgs.map((pg) => ({
+      ...pg,
+      supportedTypes: normalizeSupportedTypes(pg.supportedTypes),
+    }));
+
     return {
-      data: pgs,
+      data,
       pagination: {
         page: params.page,
         limit: params.limit,
@@ -84,10 +106,12 @@ export const pgService = {
     if (!pg) {
       throw new AppError('Payment gateway not found', 404);
     }
-    
-    return pg;
+    return {
+      ...pg,
+      supportedTypes: normalizeSupportedTypes(pg.supportedTypes),
+    };
   },
-  
+
   async getAvailablePGsForUser(userId: string) {
     // First, check the user's role
     const user = await prisma.user.findUnique({
@@ -95,7 +119,8 @@ export const pgService = {
       select: { role: true, parentId: true },
     });
     
-    // Admin can see all active PGs
+    // Admin can see all active PGs (display rate as percentage, e.g. 2 for 2%)
+    const defaultRatePct = 2;
     if (user?.role === 'ADMIN') {
       const pgs = await prisma.paymentGateway.findMany({
         where: { isActive: true },
@@ -103,52 +128,66 @@ export const pgService = {
       });
       return pgs.map(pg => ({
         ...pg,
-        customPayinRate: pg.baseRate,
-        customPayoutRate: pg.baseRate,
+        supportedTypes: normalizeSupportedTypes(pg.supportedTypes),
+        customPayinRate: defaultRatePct,
+        customPayoutRate: defaultRatePct,
         supportsPayin: pg.supportedTypes?.includes('PAYIN') ?? true,
         supportsPayout: pg.supportedTypes?.includes('PAYOUT') ?? true,
       }));
     }
-    
-    // For other users, check their specific assignments
+
     const assignments = await prisma.userPGAssignment.findMany({
       where: { userId, isEnabled: true },
       include: {
         paymentGateway: true,
       },
     });
-    
-    // If user has specific assignments, use those
-    if (assignments.length > 0) {
-      return assignments
-        .filter(a => a.paymentGateway.isActive)
-        .map(a => ({
-          ...a.paymentGateway,
-          customPayinRate: a.customPayinRate || a.paymentGateway.baseRate,
-          customPayoutRate: a.customPayoutRate || a.paymentGateway.baseRate,
-          supportsPayin: a.paymentGateway.supportedTypes?.includes('PAYIN') ?? true,
-          supportsPayout: a.paymentGateway.supportedTypes?.includes('PAYOUT') ?? true,
-        }));
+
+    if (assignments.length === 0) return [];
+
+    let ratesByPG: Record<string, { channelName: string; channelCode: string; rate: number }[]> = {};
+    try {
+      ratesByPG = await channelRateService.getUserPayinRates(userId);
+    } catch {
+      // User has no schema or other error – use default below
     }
-    
-    // No fallback - only explicitly assigned PGs are returned
-    // Users must have PGs explicitly assigned via UserPGAssignment
-    return [];
-    
-    // Old fallback removed - schema PGs no longer auto-assigned
-    // Final fallback for development: return all active PGs
-    const allActivePGs = await prisma.paymentGateway.findMany({
-      where: { isActive: true },
-      orderBy: { name: 'asc' },
-    });
-    
-    return allActivePGs.map(pg => ({
-      ...pg,
-      customPayinRate: pg.baseRate,
-      customPayoutRate: pg.baseRate,
-      supportsPayin: pg.supportedTypes?.includes('PAYIN') ?? true,
-      supportsPayout: pg.supportedTypes?.includes('PAYOUT') ?? true,
-    }));
+
+    return assignments
+      .filter(a => a.paymentGateway.isActive)
+      .map(a => {
+        const pg = a.paymentGateway;
+        const channels = ratesByPG[pg.code] || [];
+        // Prefer "VISA normal" for display: use cardNetwork + cardType so schema rate (e.g. 1.6%) is shown, not Corporate (1.5%)
+        const visaNormal =
+          channels.find((c: any) => (c.cardNetwork || '').toUpperCase() === 'VISA' && (c.cardType || '').toUpperCase() === 'NORMAL')
+          || channels.find(
+            (c: any) => {
+              const name = (c.channelName || '').toLowerCase();
+              const code = (c.channelCode || '').toLowerCase();
+              return (name.includes('visa') || code.includes('visa')) && (name.includes('normal') || code.includes('normal'));
+            }
+          )
+          || channels.find((c: any) => /visa/i.test(c.channelName || '') || /visa/i.test(c.channelCode || ''));
+        const firstRate = channels[0];
+        const displayChannel = visaNormal || firstRate;
+        const displayPayinPct = displayChannel
+          ? Math.round(Number(displayChannel.rate) * 10000) / 100
+          : defaultRatePct;
+        // Show schema rate on the card for all PGs when available (Razorpay, Sabpaisa, etc.)
+        let cardPayinPct = displayPayinPct;
+        if (displayChannel?.schemaRate != null) {
+          cardPayinPct = Math.round(Number(displayChannel.schemaRate) * 10000) / 100;
+          if (pg.code === 'RAZORPAY') logger.info(`[Payin] RAZORPAY VISA Normal rate = ${cardPayinPct}%`);
+        }
+        return {
+          ...pg,
+          supportedTypes: normalizeSupportedTypes(pg.supportedTypes),
+          customPayinRate: cardPayinPct,
+          customPayoutRate: defaultRatePct,
+          supportsPayin: pg.supportedTypes?.includes('PAYIN') ?? true,
+          supportsPayout: pg.supportedTypes?.includes('PAYOUT') ?? true,
+        };
+      });
   },
   
   async togglePGStatus(pgId: string, isActive: boolean) {
@@ -267,19 +306,7 @@ export const pgService = {
   },
   */
 
-  // Update PG base rate (Admin only)
-  async updateBaseRate(pgId: string, baseRate: number) {
-    if (baseRate < 0 || baseRate > 0.1) {
-      throw new AppError('Base rate must be between 0% and 10%', 400);
-    }
-
-    const pg = await prisma.paymentGateway.update({
-      where: { id: pgId },
-      data: { baseRate },
-    });
-
-    return pg;
-  },
+  // Base rate is per channel (TransactionChannel.baseCost), not per PG
 
   // Get all channels for a PG
   async getChannelsForPG(pgId: string) {

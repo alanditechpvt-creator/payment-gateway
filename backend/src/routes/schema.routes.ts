@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { schemaController } from '../controllers/schema.controller';
+import { channelAdminController } from '../controllers/channelAdmin.controller';
 import { authenticate, checkPermission, authorize } from '../middleware/auth';
 
 const router = Router();
@@ -9,6 +10,8 @@ router.use(authenticate);
 // Schema CRUD
 router.post('/', checkPermission('canCreateSchema'), schemaController.createSchema);
 router.get('/', schemaController.getSchemas);
+// Schema payin rates (per-channel) - must be before /:schemaId
+router.get('/:schemaId/payin-rates', authorize('ADMIN', 'WHITE_LABEL', 'MASTER_DISTRIBUTOR'), channelAdminController.getSchemaPayinRates);
 router.get('/:schemaId', schemaController.getSchemaById);
 router.patch('/:schemaId', checkPermission('canCreateSchema'), schemaController.updateSchema);
 router.delete('/:schemaId', checkPermission('canCreateSchema'), schemaController.deleteSchema);

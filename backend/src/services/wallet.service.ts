@@ -170,14 +170,13 @@ export const walletService = {
     };
   },
   
+  /**
+   * Credit commission to a user's wallet (hierarchy share from a transaction).
+   * Ledger type: COMMISSION.
+   */
   async creditCommission(userId: string, amount: number, transactionId: string, description: string) {
-    const wallet = await prisma.wallet.findUnique({
-      where: { userId },
-    });
-    
-    if (!wallet) {
-      throw new AppError('Wallet not found', 404);
-    }
+    // Ensure wallet exists for this user (admin/MD/etc.)
+    const wallet = await walletService.getOrCreateWalletForUser(userId);
     
     const decimalAmount = Number(amount);
     
@@ -207,7 +206,70 @@ export const walletService = {
     
     return result;
   },
+
+  /**
+   * Credit net payin amount to initiator's wallet (amount after PG/schema charges).
+   * Ledger type: CREDIT (not COMMISSION). Use this for "Payin credit from TXN... (after PG charges)".
+   */
+  async creditPayinNet(userId: string, amount: number, transactionId: string, description: string) {
+    const wallet = await prisma.wallet.findUnique({
+      where: { userId },
+    });
+    
+    if (!wallet) {
+      throw new AppError('Wallet not found', 404);
+    }
+    
+    const decimalAmount = Number(amount);
+    
+    const result = await prisma.$transaction(async (tx) => {
+      const updatedWallet = await tx.wallet.update({
+        where: { id: wallet.id },
+        data: {
+          balance: { increment: decimalAmount },
+        },
+      });
+      
+      await tx.walletTransaction.create({
+        data: {
+          walletId: wallet.id,
+          type: 'CREDIT',
+          amount: decimalAmount,
+          balanceBefore: wallet.balance,
+          balanceAfter: updatedWallet.balance,
+          description,
+          referenceId: transactionId,
+          referenceType: 'TRANSACTION',
+        },
+      });
+      
+      return updatedWallet;
+    });
+    
+    return result;
+  },
   
+  /**
+   * Get wallet for user; create one if user exists but has no wallet (e.g. admin created before wallet flow).
+   */
+  async getOrCreateWalletForUser(userId: string) {
+    let wallet = await prisma.wallet.findUnique({
+      where: { userId },
+    });
+    if (!wallet) {
+      const user = await prisma.user.findUnique({
+        where: { id: userId },
+      });
+      if (!user) {
+        throw new AppError('User not found', 404);
+      }
+      wallet = await prisma.wallet.create({
+        data: { userId: user.id },
+      });
+    }
+    return wallet;
+  },
+
   async addFunds(adminId: string, userId: string, amount: number, description?: string) {
     // Only admin can add funds directly
     const admin = await prisma.user.findUnique({
@@ -218,13 +280,7 @@ export const walletService = {
       throw new AppError('Only admin can add funds', 403);
     }
     
-    const wallet = await prisma.wallet.findUnique({
-      where: { userId },
-    });
-    
-    if (!wallet) {
-      throw new AppError('Wallet not found', 404);
-    }
+    const wallet = await this.getOrCreateWalletForUser(userId);
     
     const decimalAmount = Number(amount);
     
@@ -264,13 +320,7 @@ export const walletService = {
       throw new AppError('Only admin can deduct funds', 403);
     }
     
-    const wallet = await prisma.wallet.findUnique({
-      where: { userId },
-    });
-    
-    if (!wallet) {
-      throw new AppError('Wallet not found', 404);
-    }
+    const wallet = await this.getOrCreateWalletForUser(userId);
     
     const decimalAmount = Number(amount);
     const currentBalance = Number(wallet.balance);

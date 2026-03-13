@@ -1,11 +1,12 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { motion, AnimatePresence } from 'framer-motion';
 import { rateApi, userApi } from '@/lib/api';
 import { useAuthStore } from '@/lib/store';
 import toast from 'react-hot-toast';
+import { startOfDay, endOfDay, subDays, startOfMonth, endOfMonth, subMonths } from 'date-fns';
 
 interface PGRate {
   id: string;
@@ -47,9 +48,26 @@ export default function RateManagementPage() {
   const [selectedPG, setSelectedPG] = useState<PGRate | null>(null);
   const [payinRate, setPayinRate] = useState('');
   const [payoutRate, setPayoutRate] = useState('');
+  const [commissionPeriod, setCommissionPeriod] = useState<'today' | 'week' | 'month' | 'lastMonth' | 'all'>('month');
 
   // Check if user can assign rates (WL, MD, or Admin)
   const canAssignRates = user?.role === 'ADMIN' || user?.role === 'WHITE_LABEL' || user?.role === 'MASTER_DISTRIBUTOR';
+
+  const commissionDateRange = useMemo(() => {
+    const now = new Date();
+    switch (commissionPeriod) {
+      case 'today':
+        return { startDate: startOfDay(now), endDate: endOfDay(now), groupBy: 'day' as const };
+      case 'week':
+        return { startDate: startOfDay(subDays(now, 7)), endDate: endOfDay(now), groupBy: 'day' as const };
+      case 'month':
+        return { startDate: startOfMonth(now), endDate: endOfMonth(now), groupBy: 'day' as const };
+      case 'lastMonth':
+        return { startDate: startOfMonth(subMonths(now, 1)), endDate: endOfMonth(subMonths(now, 1)), groupBy: 'day' as const };
+      default:
+        return { startDate: undefined, endDate: undefined, groupBy: 'month' as const };
+    }
+  }, [commissionPeriod]);
 
   // Fetch my rates
   const { data: myRates, isLoading: myRatesLoading } = useQuery({
@@ -71,13 +89,32 @@ export default function RateManagementPage() {
     enabled: canAssignRates,
   });
 
+  // Payin rates by PG and channel (same as (i) modal in payin section)
+  const { data: payinRatesData } = useQuery({
+    queryKey: ['my-payin-rates'],
+    queryFn: () => rateApi.getMyPayinRates(),
+    enabled: canAssignRates,
+  });
+  const ratesByPG: Record<string, { paymentGateway?: { code: string }; rates: { channelName: string; channelCode: string; rateDisplay: string; schemaRateDisplay?: string }[] }> = payinRatesData?.data?.data?.ratesByPG ?? {};
+
+  // Commission stats (earned by me, from downline, day/month)
+  const { data: commissionStatsData, isLoading: commissionStatsLoading } = useQuery({
+    queryKey: ['commission-stats', commissionDateRange.startDate?.toISOString(), commissionDateRange.endDate?.toISOString(), commissionDateRange.groupBy],
+    queryFn: () => rateApi.getCommissionStats({
+      startDate: commissionDateRange.startDate?.toISOString(),
+      endDate: commissionDateRange.endDate?.toISOString(),
+      groupBy: commissionDateRange.groupBy,
+    }),
+  });
+
   const myRatesData = myRates?.data?.data || [];
   const pgsData: PGRate[] = availablePGs?.data?.data || [];
   const children: ChildUser[] = childrenData?.data?.data || [];
+  const commissionStats = commissionStatsData?.data?.data;
 
-  // Assign rate mutation
+  // Assign PG to child (schema-based rates – no per-child payin/payout override)
   const assignMutation = useMutation({
-    mutationFn: ({ targetUserId, pgId, payinRate, payoutRate }: { targetUserId: string; pgId: string; payinRate: number; payoutRate: number }) =>
+    mutationFn: ({ targetUserId, pgId, payinRate, payoutRate }: { targetUserId: string; pgId: string; payinRate?: number; payoutRate?: number }) =>
       rateApi.assignRate(targetUserId, pgId, payinRate, payoutRate),
     onSuccess: () => {
       toast.success('Rate assigned successfully!');
@@ -100,29 +137,18 @@ export default function RateManagementPage() {
     setSelectedChild(childId);
     if (pg) {
       setSelectedPG(pg);
-      setPayinRate(existingRate?.payinRate ? (existingRate.payinRate * 100).toString() : (pg.minPayinRate * 100).toString());
-      setPayoutRate(existingRate?.payoutRate ? (existingRate.payoutRate * 100).toString() : (pg.minPayoutRate * 100).toString());
+      setPayinRate(existingRate?.payinRate ? (existingRate.payinRate * 100).toString() : '');
+      setPayoutRate(existingRate?.payoutRate ? (existingRate.payoutRate * 100).toString() : '');
     }
     setShowAssignModal(true);
   };
 
   const handleAssign = () => {
     if (!selectedChild || !selectedPG) return;
-    
-    const payinRateNum = parseFloat(payinRate) / 100;
-    
-    if (payinRateNum < selectedPG.minPayinRate) {
-      toast.error(`Payin rate cannot be less than your base rate (${(selectedPG.minPayinRate * 100).toFixed(2)}%)`);
-      return;
-    }
-    
-    // Payout rate is managed at schema level by admin, not by hierarchy users
-    // Send 0 for payoutRate - backend will handle appropriately
+    // Schema-based assignment: just enable PG for the child; rates come from schema/channel
     assignMutation.mutate({
       targetUserId: selectedChild,
       pgId: selectedPG.id,
-      payinRate: payinRateNum,
-      payoutRate: 0, // Payout rates managed at schema level
     });
   };
 
@@ -171,6 +197,22 @@ export default function RateManagementPage() {
               </div>
             )}
           </div>
+          {/* Commission summary for non-assigners (uses same commission stats query; default period is month) */}
+          {commissionStats && (
+            <div className="mt-6 pt-6 border-t border-white/10">
+              <h3 className="text-lg font-semibold text-white mb-3">Commission Earned (This Month)</h3>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="bg-emerald-500/10 rounded-xl p-3 border border-emerald-500/20">
+                  <p className="text-xs text-white/50">Total</p>
+                  <p className="font-bold text-emerald-400">₹{(commissionStats.totalEarned ?? 0).toFixed(2)}</p>
+                </div>
+                <div className="bg-blue-500/10 rounded-xl p-3 border border-blue-500/20">
+                  <p className="text-xs text-white/50">From Downline</p>
+                  <p className="font-bold text-blue-400">₹{(commissionStats.fromDownline ?? 0).toFixed(2)}</p>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       </div>
     );
@@ -191,9 +233,9 @@ export default function RateManagementPage() {
           animate={{ opacity: 1, y: 0 }}
           className="bg-white/5 backdrop-blur-xl rounded-2xl border border-white/10 p-6"
         >
-          <h2 className="text-xl font-semibold text-white mb-4">📊 My Base Rates (Cost)</h2>
+          <h2 className="text-xl font-semibold text-white mb-4">📊 My Base Rates (Payin)</h2>
           <p className="text-gray-400 text-sm mb-4">
-            These are the rates you pay. You can assign rates higher than these to your children.
+            Payin rates by card/channel (same as in the (i) info on the payin page). You can assign rates higher than these to your children. Payout charges are slab-based and managed at schema level.
           </p>
           
           {pgsLoading ? (
@@ -202,33 +244,148 @@ export default function RateManagementPage() {
             </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {pgsData.map((pg) => (
-                <div
-                  key={pg.id}
-                  className="bg-gradient-to-br from-emerald-500/10 to-blue-500/10 rounded-xl p-4 border border-emerald-500/20"
-                >
-                  <div className="flex justify-between items-start mb-2">
-                    <h3 className="text-white font-medium">{pg.name}</h3>
-                    <span className={`px-2 py-1 rounded text-xs ${pg.isActive ? 'bg-emerald-500/20 text-emerald-400' : 'bg-red-500/20 text-red-400'}`}>
-                      {pg.isActive ? 'Active' : 'Inactive'}
-                    </span>
-                  </div>
-                  <div className="grid grid-cols-2 gap-2 text-sm">
-                    <div>
-                      <span className="text-gray-400">Payin:</span>
-                      <span className="text-emerald-400 font-mono ml-2">{(pg.minPayinRate * 100).toFixed(2)}%</span>
+              {pgsData.map((pg) => {
+                const pgCode = (pg as any).code || '';
+                const ratesKey = Object.keys(ratesByPG).find((k) => k.toLowerCase() === pgCode.toLowerCase()) ?? pgCode;
+                const channelRates = ratesByPG[ratesKey]?.rates ?? [];
+                return (
+                  <div
+                    key={pg.id}
+                    className="bg-gradient-to-br from-emerald-500/10 to-blue-500/10 rounded-xl p-4 border border-emerald-500/20"
+                  >
+                    <div className="flex justify-between items-start mb-2">
+                      <h3 className="text-white font-medium">{pg.name}</h3>
+                      <span className={`px-2 py-1 rounded text-xs ${pg.isActive ? 'bg-emerald-500/20 text-emerald-400' : 'bg-red-500/20 text-red-400'}`}>
+                        {pg.isActive ? 'Active' : 'Inactive'}
+                      </span>
                     </div>
-                    <div>
-                      <span className="text-gray-400">Payout:</span>
-                      <span className="text-blue-400 font-mono ml-2">{(pg.minPayoutRate * 100).toFixed(2)}%</span>
+                    {(pg as any).code && (
+                      <p className="text-xs text-white/50 font-mono mb-2">{pg.code}</p>
+                    )}
+                    {/* Payin rates by channel (same as (i) modal) */}
+                    <div className="mt-2 space-y-1.5">
+                      {channelRates.length > 0 ? (
+                        channelRates.map((r: any, idx: number) => (
+                          <div key={idx} className="flex justify-between text-sm">
+                            <span className="text-white/80">{r.channelName || r.channelCode || 'Rate'}</span>
+                            <span className="font-mono text-emerald-400">
+                              {r.schemaRateDisplay ?? (r.schemaRate != null ? `${(Number(r.schemaRate) * 100).toFixed(2)}%` : r.rateDisplay ?? '–')}
+                            </span>
+                          </div>
+                        ))
+                      ) : (
+                        <p className="text-xs text-white/40">Min payin: {((pg.minPayinRate ?? 0) * 100).toFixed(2)}%</p>
+                      )}
                     </div>
+                    {(pg.supportedTypes || (pg as any).supportedTypes) && (
+                      <div className="mt-2 text-xs text-gray-500">
+                        {pg.supportedTypes || (pg as any).supportedTypes}
+                      </div>
+                    )}
                   </div>
-                  <div className="mt-2 text-xs text-gray-500">
-                    {pg.supportedTypes}
+                );
+              })}
+            </div>
+          )}
+        </motion.div>
+
+        {/* Commission Earned Section */}
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.05 }}
+          className="bg-white/5 backdrop-blur-xl rounded-2xl border border-white/10 p-6"
+        >
+          <h2 className="text-xl font-semibold text-white mb-4">💰 Commission Earned</h2>
+          <p className="text-gray-400 text-sm mb-4">
+            Commission you earn from your rate margin (including from lower hierarchy / downline).
+          </p>
+          <div className="flex flex-wrap gap-2 mb-4">
+            {(['today', 'week', 'month', 'lastMonth', 'all'] as const).map((p) => (
+              <button
+                key={p}
+                type="button"
+                onClick={() => setCommissionPeriod(p)}
+                className={`px-3 py-1.5 rounded-lg text-sm transition-colors ${
+                  commissionPeriod === p ? 'bg-emerald-500 text-white' : 'bg-white/5 text-gray-400 hover:bg-white/10'
+                }`}
+              >
+                {p === 'today' ? 'Today' : p === 'week' ? 'This Week' : p === 'month' ? 'This Month' : p === 'lastMonth' ? 'Last Month' : 'All Time'}
+              </button>
+            ))}
+          </div>
+          {commissionStatsLoading ? (
+            <div className="flex justify-center py-8">
+              <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-emerald-500"></div>
+            </div>
+          ) : commissionStats ? (
+            <div className="space-y-6">
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <div className="bg-emerald-500/10 rounded-xl p-4 border border-emerald-500/20">
+                  <p className="text-xs text-white/50 mb-1">Total Earned</p>
+                  <p className="text-xl font-bold text-emerald-400">₹{(commissionStats.totalEarned ?? 0).toFixed(2)}</p>
+                </div>
+                <div className="bg-blue-500/10 rounded-xl p-4 border border-blue-500/20">
+                  <p className="text-xs text-white/50 mb-1">From Downline</p>
+                  <p className="text-xl font-bold text-blue-400">₹{(commissionStats.fromDownline ?? 0).toFixed(2)}</p>
+                </div>
+              </div>
+              {Array.isArray(commissionStats.byPeriod) && commissionStats.byPeriod.length > 0 && (
+                <div>
+                  <h4 className="text-white font-medium mb-2">
+                    {commissionDateRange.groupBy === 'month' ? 'Month-wise' : 'Day-wise'} Breakdown
+                  </h4>
+                  <div className="overflow-x-auto rounded-xl border border-white/10">
+                    <table className="w-full text-sm">
+                      <thead className="bg-white/5">
+                        <tr>
+                          <th className="px-4 py-2 text-left text-white/70 font-medium">{commissionDateRange.groupBy === 'month' ? 'Month' : 'Date'}</th>
+                          <th className="px-4 py-2 text-right text-white/70 font-medium">Commission (₹)</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {[...(commissionStats.byPeriod || [])].reverse().map((row: { label: string; amount: number }) => (
+                          <tr key={row.label} className="border-t border-white/5">
+                            <td className="px-4 py-2 text-white/80">{row.label}</td>
+                            <td className="px-4 py-2 text-right font-mono text-emerald-400">₹{row.amount.toFixed(2)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
                   </div>
                 </div>
-              ))}
+              )}
+              {Array.isArray(commissionStats.byChild) && commissionStats.byChild.length > 0 && (
+                <div>
+                  <h4 className="text-white font-medium mb-2">By Downstream Entity</h4>
+                  <div className="overflow-x-auto rounded-xl border border-white/10">
+                    <table className="w-full text-sm">
+                      <thead className="bg-white/5">
+                        <tr>
+                          <th className="px-4 py-2 text-left text-white/70 font-medium">Entity</th>
+                          <th className="px-4 py-2 text-left text-white/70 font-medium">Email</th>
+                          <th className="px-4 py-2 text-right text-white/70 font-medium">Commission (₹)</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {commissionStats.byChild.map((row: { userId: string; userName: string; email: string; amount: number }) => (
+                          <tr key={row.userId} className="border-t border-white/5">
+                            <td className="px-4 py-2 text-white/80">{row.userName || '–'}</td>
+                            <td className="px-4 py-2 text-white/50 text-xs">{row.email}</td>
+                            <td className="px-4 py-2 text-right font-mono text-emerald-400">₹{row.amount.toFixed(2)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+              {(commissionStats.totalEarned === 0 || commissionStats.totalEarned === undefined) && !commissionStatsLoading && (
+                <p className="text-gray-400 text-sm py-4">No commission in this period.</p>
+              )}
             </div>
+          ) : (
+            <p className="text-gray-400 text-sm py-4">No commission data.</p>
           )}
         </motion.div>
 
@@ -293,10 +450,10 @@ export default function RateManagementPage() {
                     </div>
                   </div>
                   
-                  {/* Assigned Rates */}
+                  {/* Assigned gateways (rates from schema/channel, not per-child override) */}
                   <div className="p-4">
                     {child.rates.length === 0 ? (
-                      <p className="text-gray-400 text-sm mb-3">No PG rates assigned yet.</p>
+                      <p className="text-gray-400 text-sm mb-3">No payment gateways assigned yet.</p>
                     ) : (
                       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 mb-3">
                         {child.rates.map((rate) => (
@@ -314,16 +471,9 @@ export default function RateManagementPage() {
                                 {rate.isEnabled ? '✓ Enabled' : '✗ Disabled'}
                               </span>
                             </div>
-                            <div className="flex gap-4 mt-2 text-xs">
-                              <div>
-                                <span className="text-gray-400">Payin:</span>
-                                <span className="text-emerald-400 font-mono ml-1">{(rate.payinRate * 100).toFixed(2)}%</span>
-                              </div>
-                              <div>
-                                <span className="text-gray-400">Payout:</span>
-                                <span className="text-blue-400 font-mono ml-1">{(rate.payoutRate * 100).toFixed(2)}%</span>
-                              </div>
-                            </div>
+                            <p className="mt-2 text-xs text-gray-400">
+                              Rates follow the user&apos;s schema and channel configuration.
+                            </p>
                             <button
                               onClick={() => {
                                 const pg = pgsData.find(p => p.id === rate.paymentGateway.id);
@@ -331,7 +481,7 @@ export default function RateManagementPage() {
                               }}
                               className="mt-2 text-xs text-gray-400 hover:text-white transition-colors"
                             >
-                              ✏️ Edit Rate
+                              ⚙️ Manage PG
                             </button>
                           </div>
                         ))}
@@ -390,7 +540,7 @@ export default function RateManagementPage() {
               className="bg-slate-800 rounded-2xl p-6 w-full max-w-md border border-white/10"
             >
               <h3 className="text-xl font-bold text-white mb-4">
-                Assign Rate
+                Assign Payment Gateway
               </h3>
               
               {/* PG Selection */}
@@ -403,13 +553,12 @@ export default function RateManagementPage() {
                         key={pg.id}
                         onClick={() => {
                           setSelectedPG(pg);
-                          setPayinRate((pg.minPayinRate * 100).toString());
-                          setPayoutRate((pg.minPayoutRate * 100).toString());
+                          setPayinRate('');
+                          setPayoutRate('');
                         }}
                         className="p-3 bg-white/5 rounded-lg border border-white/10 hover:border-emerald-500/50 transition-colors text-left"
                       >
                         <div className="font-medium text-white">{pg.name}</div>
-                        <div className="text-xs text-gray-400">Min: {(pg.minPayinRate * 100).toFixed(2)}%</div>
                       </button>
                     ))}
                   </div>
@@ -418,48 +567,17 @@ export default function RateManagementPage() {
               
               {selectedPG && (
                 <>
-                  <div className="mb-4 p-3 bg-emerald-500/10 rounded-lg border border-emerald-500/30">
-                    <div className="font-medium text-white">{selectedPG.name}</div>
-                    <div className="text-xs text-gray-400">
-                      Your base rate: Payin {(selectedPG.minPayinRate * 100).toFixed(2)}% | Payout {(selectedPG.minPayoutRate * 100).toFixed(2)}%
+                  <div className="mb-6 space-y-3">
+                    <div className="mb-2 p-3 bg-emerald-500/10 rounded-lg border border-emerald-500/30">
+                      <div className="font-medium text-white">{selectedPG.name}</div>
                     </div>
-                  </div>
-                  
-                  <div className="space-y-4 mb-6">
-                    <div>
-                      <label className="block text-gray-400 text-sm mb-2">
-                        Payin Rate (%) <span className="text-gray-500">Min: {(selectedPG.minPayinRate * 100).toFixed(2)}%</span>
-                      </label>
-                      <input
-                        type="number"
-                        step="0.01"
-                        min={(selectedPG.minPayinRate * 100)}
-                        value={payinRate}
-                        onChange={(e) => setPayinRate(e.target.value)}
-                        className="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-xl text-white focus:border-emerald-500/50 focus:ring-1 focus:ring-emerald-500/50 outline-none"
-                        placeholder="e.g., 1.5"
-                      />
-                      {payinRate && parseFloat(payinRate) > selectedPG.minPayinRate * 100 && (
-                        <div className="text-xs text-emerald-400 mt-1">
-                          Your profit: {(parseFloat(payinRate) - selectedPG.minPayinRate * 100).toFixed(2)}%
-                        </div>
-                      )}
-                    </div>
-                    
-                    {/* Payout Rate - Only Admin can set, others see info message */}
-                    <div>
-                      <label className="block text-gray-400 text-sm mb-2">
-                        Payout Rate
-                      </label>
-                      <div className="bg-blue-500/10 border border-blue-500/20 rounded-xl p-3">
-                        <p className="text-blue-300 text-sm">
-                          <strong>Note:</strong> Payout charges are managed at the Schema level (Gold/Platinum) by Admin using slab-based rates.
-                        </p>
-                        <p className="text-blue-400/70 text-xs mt-1">
-                          Payout fees are automatically applied based on transaction amount ranges.
-                        </p>
-                      </div>
-                    </div>
+                    <p className="text-sm text-gray-300">
+                      This gateway will be enabled for the selected user.{" "}
+                      Rates (payin, payout & commissions) will follow that user&apos;s schema and the configured channel rates.
+                    </p>
+                    <p className="text-xs text-gray-400">
+                      No per-user payin/payout percentage is set here, same as in the admin panel.
+                    </p>
                   </div>
                   
                   <div className="flex gap-3">
@@ -474,7 +592,7 @@ export default function RateManagementPage() {
                       disabled={assignMutation.isPending}
                       className="flex-1 py-3 px-4 bg-emerald-500 text-white rounded-xl hover:bg-emerald-600 transition-colors disabled:opacity-50"
                     >
-                      {assignMutation.isPending ? 'Assigning...' : 'Assign Rate'}
+                      {assignMutation.isPending ? 'Assigning...' : 'Assign gateway'}
                     </button>
                   </div>
                 </>

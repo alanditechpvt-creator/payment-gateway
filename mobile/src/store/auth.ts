@@ -7,6 +7,7 @@ interface User {
   role: string;
   firstName?: string;
   lastName?: string;
+  phone?: string;
   status: string;
 }
 
@@ -17,6 +18,7 @@ interface AuthState {
   isAuthenticated: boolean;
   isLoading: boolean;
   setAuth: (user: User, accessToken: string, refreshToken: string) => Promise<void>;
+  updateUser: (user: Partial<User> | null) => void;
   logout: () => Promise<void>;
   initialize: () => Promise<void>;
 }
@@ -34,12 +36,20 @@ export const useAuthStore = create<AuthState>((set) => ({
     await SecureStore.setItemAsync('user', JSON.stringify(user));
     set({ user, accessToken, refreshToken, isAuthenticated: true });
   },
-  
+
+  updateUser: (userUpdate) => {
+    set((state) => {
+      if (!userUpdate) return { user: null };
+      const next = state.user ? { ...state.user, ...userUpdate } : (userUpdate as User);
+      return { user: next };
+    });
+  },
+
   logout: async () => {
+    // For mobile quick login (MPIN / biometric), keep refreshToken + user in SecureStore
+    // and only clear the in-memory auth state + accessToken.
     await SecureStore.deleteItemAsync('accessToken');
-    await SecureStore.deleteItemAsync('refreshToken');
-    await SecureStore.deleteItemAsync('user');
-    set({ user: null, accessToken: null, refreshToken: null, isAuthenticated: false });
+    set({ user: null, accessToken: null, isAuthenticated: false });
   },
   
   initialize: async () => {

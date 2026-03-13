@@ -157,48 +157,35 @@ export const userRatesController = {
       const existingRate = await prisma.userPayinRate.findUnique({
         where: { id: rateId },
         include: {
-          transactionChannel: {
-            include: {
-              schemaPayinRates: {
-                where: {
-                  schemaId: (await prisma.user.findUnique({
-                    where: { id: userId },
-                    select: { schemaId: true }
-                  }))!.schemaId!
-                }
-              }
-            }
-          }
-        }
+          transactionChannel: { include: { paymentGateway: true } },
+        },
       });
       
       if (!existingRate || existingRate.userId !== userId) {
         throw new AppError('Rate not found', 404);
       }
       
-      // Validate new rate if provided
+      // Validate new rate if provided (min = user's schema single rate)
       if (customRate !== undefined) {
-        const schemaRate = existingRate.transactionChannel.schemaPayinRates[0];
-        if (!schemaRate) {
-          throw new AppError('Schema rate not configured for this channel', 400);
-        }
-        
-        if (customRate < schemaRate.payinRate) {
+        const targetUser = await prisma.user.findUnique({
+          where: { id: userId },
+          include: { schema: true },
+        });
+        const schemaPayinRate = Number(existingRate.transactionChannel.baseCost ?? 0.02);
+        if (customRate < schemaPayinRate) {
           throw new AppError(
-            `Custom rate (${(customRate * 100).toFixed(2)}%) cannot be lower than schema rate (${(schemaRate.payinRate * 100).toFixed(2)}%)`,
+            `Custom rate (${(customRate * 100).toFixed(2)}%) cannot be lower than schema rate (${(schemaPayinRate * 100).toFixed(2)}%)`,
             400
           );
         }
       }
       
-      // Update rate
+      // Update rate (UserPayinRate uses payinRate; accept customRate from body as alias)
+      const updateData: any = { ...(isEnabled !== undefined && { isEnabled }) };
+      if (customRate !== undefined) updateData.payinRate = customRate;
       const updated = await prisma.userPayinRate.update({
         where: { id: rateId },
-        data: {
-          ...(customRate !== undefined && { customRate }),
-          ...(isEnabled !== undefined && { isEnabled }),
-          updatedById: assignerId
-        },
+        data: updateData,
         include: {
           transactionChannel: {
             include: {

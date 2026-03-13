@@ -21,5 +21,8 @@ router.get('/user/:userId/export', authorize(['ADMIN', 'WHITE_LABEL', 'MASTER_DI
 // Get global ledger (admin only)
 router.get('/global', authorize('ADMIN'), ledgerController.getGlobalLedger);
 
+// Export global ledger (admin only)
+router.get('/global/export', authorize('ADMIN'), ledgerController.exportGlobalLedger);
+
 export default router;
 

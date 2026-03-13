@@ -101,32 +101,76 @@ export const pgController = {
     }
   },
 
-  // Admin: Update PG base rate
-  async updateBaseRate(req: AuthRequest, res: Response, next: NextFunction) {
-    try {
-      const { pgId } = req.params;
-      const { baseRate } = req.body;
-      
-      if (baseRate === undefined || baseRate === null) {
-        return res.status(400).json({ 
-          success: false, 
-          error: 'baseRate is required' 
-        });
-      }
-      
-      const pg = await pgService.updateBaseRate(pgId, parseFloat(baseRate));
-      res.json({ success: true, data: pg });
-    } catch (error) {
-      next(error);
-    }
+  async updateBaseRate(_req: AuthRequest, res: Response) {
+    res.status(410).json({
+      success: false,
+      error: 'PG-level base rate removed. Set base rate per channel (card type) via PATCH /api/admin/channels/:channelId with baseCost.',
+    });
   },
 
-  // Get all channels for a PG
   async getChannels(req: AuthRequest, res: Response, next: NextFunction) {
     try {
       const { pgId } = req.params;
       const channels = await pgService.getChannelsForPG(pgId);
       res.json({ success: true, data: channels });
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  /**
+   * Get sample payment response structure for a PG (for channel/card-type mapping).
+   * Does not call the PG API; returns static examples of response shapes we use to build rawPaymentMethod.
+   */
+  async getSampleResponse(req: AuthRequest, res: Response, next: NextFunction) {
+    try {
+      const { pgId } = req.params;
+      const pg = await pgService.getPGById(pgId);
+      if (!pg) {
+        return res.status(404).json({ success: false, error: 'Payment gateway not found' });
+      }
+      const code = (pg as any).code || '';
+      const samples: Record<string, any> = {
+        RAZORPAY: {
+          description: 'From Razorpay Payments API (e.g. GET /payments/:id) after payment',
+          paymentDetails: {
+            method: 'card',
+            card: { network: 'visa', type: 'credit', last4: '4111' },
+            amount: 10000,
+            status: 'captured',
+          },
+          mapping: {
+            rawPaymentMethod: 'Built from method + card.network + card.type',
+            card: '→ credit_<network>_normal (e.g. credit_visa_normal)',
+            debit: '→ rawPaymentMethod = "debitcard"',
+            upi: '→ method "upi" → rawPaymentMethod = "upi"',
+            netbanking: '→ method "netbanking" → rawPaymentMethod = "netbanking"',
+          },
+        },
+        SABPAISA: {
+          description: 'From Sabpaisa callback / response; map equivalent fields to method + card type',
+          mapping: {
+            rawPaymentMethod: 'Use TXN_MODE, CARD_TYPE, CARD_CATEGORY (or equivalent) to build same strings as Razorpay',
+          },
+        },
+        RUNPAISA: {
+          description: 'From Runpaisa ORDERSTATUS in webhook',
+          orderStatus: {
+            TXN_MODE: 'card',
+            CARD_TYPE: 'VISA',
+            CARD_CATEGORY: 'NORMAL',
+            PG_PARTNER: 'razorpay',
+          },
+          mapping: {
+            rawPaymentMethod: 'Built from TXN_MODE + CARD_TYPE + CARD_CATEGORY (e.g. credit_visa_normal)',
+          },
+        },
+      };
+      const sample = samples[code] || {
+        description: 'No sample for this PG. Use Razorpay/Runpaisa samples as reference and map your PG response fields to method + card network + type.',
+        mapping: { rawPaymentMethod: 'Must match TransactionChannel.pgResponseCodes for channel detection' },
+      };
+      res.json({ success: true, data: { pgCode: code, ...sample } });
     } catch (error) {
       next(error);
     }

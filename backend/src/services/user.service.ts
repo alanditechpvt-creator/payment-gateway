@@ -63,7 +63,10 @@ export const userService = {
     onboardingTokenExpiry.setHours(onboardingTokenExpiry.getHours() + 24);
     
     // Create user with pending status
-    const hashedPassword = await bcrypt.hash(data.password, 12);
+    // Password may be omitted for admin/parent-created users; they'll set it during onboarding.
+    // In that case, generate a random temporary password so the field is never null.
+    const rawPassword = data.password || crypto.randomBytes(16).toString('hex');
+    const hashedPassword = await bcrypt.hash(rawPassword, 12);
     
     const user = await prisma.user.create({
       data: {
@@ -367,11 +370,15 @@ export const userService = {
           lastName: true,
           businessName: true,
           phone: true,
+          schemaId: true,
           createdAt: true,
           lastLoginAt: true,
           onboardingToken: true, // Include for pending onboarding users
           parent: {
             select: { id: true, email: true, firstName: true, lastName: true },
+          },
+          schema: {
+            select: { id: true, name: true, code: true },
           },
           _count: {
             select: { children: true },

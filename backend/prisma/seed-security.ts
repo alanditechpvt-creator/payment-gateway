@@ -44,6 +44,13 @@ const SECURITY_SETTINGS = [
     category: 'SECURITY',
     dataType: 'BOOLEAN',
   },
+  {
+    key: 'ADMIN_BASE_RATE',
+    value: '0.01',
+    description: 'Admin base rate (decimal, e.g. 0.01 = 1%). Commission to Admin = (child rate - ADMIN_BASE_RATE).',
+    category: 'COMMISSION',
+    dataType: 'NUMBER',
+  },
 ];
 
 async function main() {

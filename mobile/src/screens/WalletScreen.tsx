@@ -11,10 +11,12 @@ import {
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { useQuery } from '@tanstack/react-query';
+import { useNavigation } from '@react-navigation/native';
 import { walletApi } from '../api';
 import { format } from 'date-fns';
 
 export default function WalletScreen() {
+  const navigation = useNavigation<any>();
   const { data: wallet, refetch, isRefetching } = useQuery({
     queryKey: ['wallet'],
     queryFn: () => walletApi.getWallet(),
@@ -25,8 +27,8 @@ export default function WalletScreen() {
     queryFn: () => walletApi.getTransactions({ limit: 20 }),
   });
   
-  const walletData = wallet?.data?.data;
-  const txnData = transactions?.data?.data || [];
+  const walletData = wallet?.data?.data ?? wallet?.data;
+  const txnData = transactions?.data?.data ?? transactions?.data ?? [];
   
   const getTypeIcon = (type: string) => {
     const icons: Record<string, { name: string; color: string; bg: string }> = {
@@ -76,23 +78,17 @@ export default function WalletScreen() {
       
       {/* Quick Actions */}
       <View style={styles.actions}>
-        <TouchableOpacity style={styles.actionBtn}>
+        <TouchableOpacity style={styles.actionBtn} onPress={() => navigation.navigate('Transfer')}>
           <LinearGradient colors={['#6366f1', '#8b5cf6']} style={styles.actionGradient}>
             <Ionicons name="paper-plane" size={20} color="#fff" />
           </LinearGradient>
           <Text style={styles.actionText}>Transfer</Text>
         </TouchableOpacity>
-        <TouchableOpacity style={styles.actionBtn}>
-          <View style={[styles.actionIcon, { backgroundColor: 'rgba(16, 185, 129, 0.1)' }]}>
-            <Ionicons name="add" size={20} color="#10b981" />
-          </View>
-          <Text style={styles.actionText}>Add Money</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.actionBtn}>
+        <TouchableOpacity style={styles.actionBtn} onPress={() => navigation.navigate('Ledger')}>
           <View style={[styles.actionIcon, { backgroundColor: 'rgba(245, 158, 11, 0.1)' }]}>
             <Ionicons name="time" size={20} color="#f59e0b" />
           </View>
-          <Text style={styles.actionText}>History</Text>
+          <Text style={styles.actionText}>Ledger</Text>
         </TouchableOpacity>
       </View>
       

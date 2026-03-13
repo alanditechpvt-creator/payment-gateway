@@ -37,7 +37,8 @@ export const emailService = {
   },
   
   async sendOnboardingInvite(email: string, token: string, inviterName: string) {
-    const link = `${config.urls.adminApp}/onboarding/${token}`;
+    // Use mainApp (frontend) so invitees get the full onboarding form (Personal, Business, Tax/KYC, Aadhaar, profile photo, email OTP)
+    const link = `${config.urls.mainApp}/onboarding/${token}`;
     // Log onboarding link for development when SMTP is not configured
     logger.info(`📧 Onboarding link for ${email}: ${link}`);
     

@@ -48,8 +48,9 @@ export const schemaService = {
         name: data.name,
         code: data.code.toUpperCase(),
         description: data.description,
-        applicableRoles: data.applicableRoles,
+        applicableRoles: Array.isArray(data.applicableRoles) ? data.applicableRoles.join(',') : (data.applicableRoles as any),
         isDefault: data.isDefault || false,
+        payinRate: data.payinRate ?? 0.02,
         createdById: creatorId,
       },
     });
@@ -58,14 +59,17 @@ export const schemaService = {
   },
   
   async updateSchema(schemaId: string, data: Partial<CreateSchemaDTO>) {
+    const updateData: any = {};
+    if (data.name !== undefined) updateData.name = data.name;
+    if (data.description !== undefined) updateData.description = data.description;
+    if (data.applicableRoles !== undefined) {
+      updateData.applicableRoles = Array.isArray(data.applicableRoles) ? data.applicableRoles.join(',') : data.applicableRoles;
+    }
+    if (data.isDefault !== undefined) updateData.isDefault = data.isDefault;
+    if (data.payinRate !== undefined) updateData.payinRate = data.payinRate;
     const schema = await prisma.schema.update({
       where: { id: schemaId },
-      data: {
-        name: data.name,
-        description: data.description,
-        applicableRoles: JSON.stringify(data.applicableRoles),
-        isDefault: data.isDefault,
-      },
+      data: updateData,
     });
     
     return schema;
@@ -276,7 +280,7 @@ export const schemaService = {
     return schema;
   },
   
-  async assignSchemaToUser(userId: string, schemaId: string) {
+  async assignSchemaToUser(userId: string, schemaId: string, assignerRole?: string) {
     const schema = await prisma.schema.findUnique({
       where: { id: schemaId },
     });
@@ -293,9 +297,13 @@ export const schemaService = {
       throw new AppError('User not found', 404);
     }
     
-    // Check if schema is applicable to user's role
-    if (!schema.applicableRoles.includes(user.role)) {
-      throw new AppError('This schema is not applicable to the user\'s role', 400);
+    // Admin / Super Admin can assign any schema; others must respect applicableRoles
+    const isAdmin = assignerRole === 'ADMIN' || assignerRole === 'SUPER_ADMIN';
+    if (!isAdmin) {
+      const rolesList = (schema.applicableRoles || '').split(',').map((r: string) => r.trim()).filter(Boolean);
+      if (rolesList.length > 0 && !rolesList.includes(user.role)) {
+        throw new AppError('This schema is not applicable to the user\'s role', 400);
+      }
     }
     
     await prisma.user.update({

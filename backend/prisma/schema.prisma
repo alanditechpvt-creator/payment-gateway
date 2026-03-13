@@ -80,6 +80,7 @@ model User {
   auditLogs             AuditLog[]
   notifications         Notification[]
   beneficiaries         Beneficiary[]
+  payoutProfiles        PayoutProfile[]
   announcements         Announcement[] @relation("AnnouncementCreator")
   cachedBills           CachedBill[]
   
@@ -99,6 +100,24 @@ model RefreshToken {
   user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   expiresAt   DateTime
   createdAt   DateTime @default(now())
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+model LoginAttempt {
+  id              String    @id @default(uuid())
+  email           String
+  ipAddress       String?
+  userAgent       String?
+  success         Boolean
+  failureReason   String?
+  captchaVerified Boolean   @default(false)
+  createdAt       DateTime  @default(now())
+
+  @@index([email])
+  @@index([ipAddress])
+  @@index([createdAt])
 }
 
 // ==================== PERMISSIONS ====================
@@ -169,9 +188,6 @@ model PaymentGateway {
   name            String              @unique
   code            String              @unique
   description     String?
-  
-  // Base rate set by admin (considering VISA/Master/RuPay normal cards)
-  baseRate        Float               @default(0.02)
   
   // Configuration (encrypted in production)
   apiKey          String?
@@ -264,6 +280,9 @@ model Schema {
   // Applicable to which roles (comma separated)
   applicableRoles String          @default("RETAILER")
   
+  // Single payin rate for this schema (e.g. RATE15 = 1.5% = 0.015). Applied to all channels; PG base is set per PG.
+  payinRate       Float           @default(0.02)
+  
   isActive        Boolean         @default(true)
   isDefault       Boolean         @default(false)
   
@@ -272,8 +291,11 @@ model Schema {
   
   // Relations
   users           User[]
-  payinRates      SchemaPayinRate[]     // Payin rates per channel
+  payinRates      SchemaPayinRate[]     // Legacy per-channel overrides (optional); primary rate is payinRate above
   payoutConfig    SchemaPayoutConfig?   // Payout slab configuration (one per schema)
+
+  @@index([isActive])
+  @@index([createdById])
 }
 
 // ==================== PAYIN RATE CONFIGURATION ====================
@@ -290,8 +312,7 @@ model SchemaPayinRate {
   pgId                String
   paymentGateway      PaymentGateway @relation(fields: [pgId], references: [id], onDelete: Cascade)
   
-  // Rate for this schema + channel combination (percentage)
-  // e.g., 0.02 = 2%
+  // User rate for this schema on this channel (e.g. RATE15 + VISA normal = 1.5%, AMEX = 4%). Base = channel.baseCost.
   payinRate           Float     @default(0.02)
   
   // Is this channel enabled for this schema
@@ -422,6 +443,8 @@ model UserPGAssignment {
   updatedAt       DateTime        @updatedAt
   
   @@unique([userId, pgId])
+  @@index([pgId])
+  @@index([userId])
 }
 
 // ==================== TRANSACTIONS ====================
@@ -467,6 +490,12 @@ model Transaction {
   beneficiaryAccount  String?
   beneficiaryIfsc     String?
   beneficiaryMode     String?   // IMPS, NEFT, RTGS
+
+  // Initiator location (optional, captured from web/mobile)
+  locationLatitude    Float?
+  locationLongitude   Float?
+  locationAccuracyM   Float?    // accuracy in meters, if available
+  locationSource      String?   // WEB, MOBILE, or other descriptor
   
   // Timestamps
   createdAt           DateTime  @default(now())
@@ -483,6 +512,7 @@ model Transaction {
   @@index([createdAt])
   @@index([initiatorId, status])
   @@index([initiatorId, type])
+  @@index([initiatorId, createdAt])
   @@index([pgId, status])
   @@index([pgId, createdAt])
   @@index([channelId])
@@ -502,6 +532,30 @@ model CommissionTransaction {
   
   creditedAt      DateTime?
   createdAt       DateTime      @default(now())
+
+  @@index([transactionId])
+  @@index([userId])
+  @@index([userId, createdAt])
+}
+
+// ==================== PAYOUT PROFILE ====================
+// Groups beneficiaries by mobile; user can have max 3 profiles.
+
+model PayoutProfile {
+  id          String        @id @default(uuid())
+  userId      String
+  user        User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  mobile      String        // Primary identifier for this profile
+  name        String
+  email       String?
+  isActive    Boolean       @default(true)
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  beneficiaries Beneficiary[]
+
+  @@unique([userId, mobile])
+  @@index([userId])
 }
 
 // ==================== BENEFICIARY ====================
@@ -510,6 +564,8 @@ model Beneficiary {
   id              String        @id @default(uuid())
   userId          String
   user            User          @relation(fields: [userId], references: [id])
+  profileId       String?       // Optional: link to PayoutProfile
+  profile         PayoutProfile? @relation(fields: [profileId], references: [id], onDelete: SetNull)
   
   name            String
   accountNumber   String
@@ -530,6 +586,7 @@ model Beneficiary {
   transactions    Transaction[] @relation("BeneficiaryTransactions")
   
   @@index([userId])
+  @@index([profileId])
 }
 
 // ==================== SYSTEM SETTINGS ====================

@@ -50,9 +50,6 @@ export default function DashboardScreen({ navigation }: Props) {
       navigation.navigate('CCPayment');
     } else if (action === 'Transfer') {
       navigation.navigate('Transfer');
-    } else if (action === 'Scan') {
-      // TODO: Implement QR code scanning
-      alert('QR code scanning coming soon!');
     }
   };
   

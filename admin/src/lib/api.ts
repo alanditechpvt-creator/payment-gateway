@@ -84,6 +84,8 @@ export const userApi = {
     api.put(`/users/${userId}/permissions`, permissions),
   assignPG: (userId: string, pgId: string, customRate?: number) =>
     api.post(`/users/${userId}/pg`, { pgId, customRate }),
+  removePGAssignment: (userId: string, pgId: string) =>
+    api.delete(`/users/${userId}/pg/${pgId}`),
   getOnboardingLink: (userId: string) => api.get(`/users/${userId}/onboarding-link`),
   resendOnboardingEmail: (userId: string) => api.post(`/users/${userId}/resend-onboarding`),
 };
@@ -101,12 +103,17 @@ export const ledgerApi = {
   getUserLedger: (userId: string, params?: any) => api.get(`/ledger/user/${userId}`, { params }),
   getGlobalLedger: (params?: any) => api.get('/ledger/global', { params }),
   exportUserLedger: (userId: string, params?: any) => api.get(`/ledger/user/${userId}/export`, { params, responseType: 'blob' }),
+  exportGlobalLedger: (params?: { format?: 'csv' | 'json'; startDate?: string; endDate?: string; type?: string; userId?: string }) =>
+    api.get('/ledger/global/export', { params, responseType: 'blob' }),
 };
 
 export const transactionApi = {
   getTransactions: (params?: any) => api.get('/transactions', { params }),
+  getTransactionById: (transactionId: string) => api.get(`/transactions/${transactionId}`),
   getStats: (params?: any) => api.get('/transactions/stats', { params }),
   updateTransactionStatus: (id: string, status: string) => api.patch(`/transactions/${id}/status`, { status }),
+  /** Admin only: check status with payment gateway and update if PENDING */
+  checkPGStatus: (transactionId: string) => api.post(`/transactions/${transactionId}/check-pg-status`),
 };
 
 export const pgApi = {
@@ -143,6 +150,10 @@ export const schemaApi = {
   assignToUser: (schemaId: string, userId: string) =>
     api.post(`/schemas/${schemaId}/assign/${userId}`),
   
+  // Schema payin rates (per-channel) - Admin only
+  getSchemaPayinRates: (schemaId: string) =>
+    api.get(`/admin/channels/schemas/${schemaId}/payin-rates`),
+  
   // Payout Slab Management (Admin Only)
   getPayoutSlabs: (schemaPGRateId: string) =>
     api.get(`/schemas/pg-rate/${schemaPGRateId}/payout-slabs`),
@@ -162,9 +173,11 @@ export const rateApi = {
   getAvailablePGsForAssignment: () => api.get('/rates/available-pgs'),
   // Get children with their rates
   getChildrenRates: (pgId?: string) => api.get('/rates/children', { params: { pgId } }),
-  // Assign rate to a user
-  assignRate: (targetUserId: string, pgId: string, payinRate: number, payoutRate: number) =>
-    api.post('/rates/assign', { targetUserId, pgId, payinRate, payoutRate }),
+  // Get PG assignments for a specific user (admin: any user; others: direct child only). Use in Manage Rates popup.
+  getRatesForUser: (userId: string) => api.get(`/rates/user/${userId}/assignments`),
+  // Assign rate to a user (omit payinRate/payoutRate for schema-only: rates from user's schema)
+  assignRate: (targetUserId: string, pgId: string, payinRate?: number, payoutRate?: number) =>
+    api.post('/rates/assign', { targetUserId, pgId, ...(payinRate != null && { payinRate }), ...(payoutRate != null && { payoutRate }) }),
   // Bulk assign rates
   bulkAssignRates: (assignments: Array<{ targetUserId: string; pgId: string; payinRate: number; payoutRate: number }>) =>
     api.post('/rates/bulk-assign', { assignments }),

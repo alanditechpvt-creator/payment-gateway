@@ -136,6 +136,11 @@ export const createTransactionSchema = z.object({
   customerName: z.string().min(2).max(100).optional(),
   customerEmail: z.string().email().optional(),
   customerPhone: z.string().regex(/^[6-9]\d{9}$/).optional(),
+  // Optional initiator location (from web/mobile)
+  locationLatitude: z.number().optional(),
+  locationLongitude: z.number().optional(),
+  locationAccuracyM: z.number().optional(),
+  locationSource: z.string().max(20).optional(),
   // Payout specific
   beneficiaryId: z.string().uuid().optional(),
   beneficiaryName: z.string().min(2).max(100).optional(),
@@ -201,6 +206,7 @@ export const createSchemaSchema = z.object({
   description: z.string().max(200).optional(),
   applicableRoles: z.array(userRoleSchema).min(1, 'At least one role required'),
   isDefault: z.boolean().default(false),
+  payinRate: z.number().min(0).max(0.1, 'Rate must be between 0 and 10%').optional(),
 });
 
 export const updateSchemaSchema = createSchemaSchema.partial();
@@ -233,7 +239,6 @@ export const createPGSchema = z.object({
   apiSecret: z.string().optional(),
   merchantId: z.string().optional(),
   webhookSecret: z.string().optional(),
-  baseRate: z.coerce.number().min(0).max(1, 'Rate must be between 0 and 1'),
   minAmount: z.coerce.number().positive().optional(),
   maxAmount: z.coerce.number().positive().optional(),
   supportedTypes: z.string().regex(/^(PAYIN|PAYOUT)(,(PAYIN|PAYOUT))?$/).default('PAYIN,PAYOUT'),
@@ -268,7 +273,7 @@ export const updateCardTypeSchema = createCardTypeSchema.partial().omit({ pgId: 
 export const assignRateSchema = z.object({
   targetUserId: z.string().uuid(),
   pgId: z.string().uuid(),
-  payinRate: z.coerce.number().min(0).max(1),
+  payinRate: z.coerce.number().min(0).max(1).optional(),
   payoutRate: z.coerce.number().min(0).max(1).optional(),
 });
 

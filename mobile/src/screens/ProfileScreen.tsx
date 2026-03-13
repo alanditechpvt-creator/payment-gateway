@@ -9,8 +9,11 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuthStore } from '../store/auth';
+import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 
-export default function ProfileScreen() {
+type Props = { navigation: NativeStackNavigationProp<any> };
+
+export default function ProfileScreen({ navigation }: Props) {
   const { user, logout } = useAuthStore();
   
   const handleLogout = () => {
@@ -21,13 +24,12 @@ export default function ProfileScreen() {
   };
   
   const menuItems = [
-    { icon: 'person-outline', label: 'Edit Profile', onPress: () => {} },
-    { icon: 'shield-checkmark-outline', label: 'Security', onPress: () => {} },
-    { icon: 'notifications-outline', label: 'Notifications', onPress: () => {} },
-    { icon: 'card-outline', label: 'Payment Methods', onPress: () => {} },
-    { icon: 'document-text-outline', label: 'Reports', onPress: () => {} },
-    { icon: 'help-circle-outline', label: 'Help & Support', onPress: () => {} },
-    { icon: 'information-circle-outline', label: 'About', onPress: () => {} },
+    { icon: 'book-outline', label: 'My Ledger', screen: 'Ledger' as const },
+    { icon: 'percent-outline', label: 'My Rates', screen: 'Rates' as const },
+    { icon: 'git-branch-outline', label: 'Downline Rates', screen: 'RateHierarchy' as const },
+    { icon: 'people-outline', label: 'Beneficiaries', screen: 'Beneficiaries' as const },
+    { icon: 'layers-outline', label: 'Schemas', screen: 'Schemas' as const },
+    { icon: 'settings-outline', label: 'Settings', screen: 'Settings' as const },
   ];
   
   return (
@@ -54,7 +56,7 @@ export default function ProfileScreen() {
           <TouchableOpacity
             key={index}
             style={styles.menuItem}
-            onPress={item.onPress}
+            onPress={() => (navigation.getParent() as any)?.navigate?.(item.screen)}
           >
             <View style={styles.menuIcon}>
               <Ionicons name={item.icon as any} size={22} color="#a1a1aa" />

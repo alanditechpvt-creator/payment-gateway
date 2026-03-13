@@ -35,7 +35,8 @@
         {
           "cameraPermission": "Allow $(PRODUCT_NAME) to access your camera for KYC verification."
         }
-      ]
+      ],
+      "expo-secure-store"
     ],
     "extra": {
       "eas": {

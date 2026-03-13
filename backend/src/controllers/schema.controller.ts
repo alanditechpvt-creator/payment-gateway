@@ -104,7 +104,8 @@ export const schemaController = {
   async assignToUser(req: AuthRequest, res: Response, next: NextFunction) {
     try {
       const { schemaId, userId } = req.params;
-      const result = await schemaService.assignSchemaToUser(userId, schemaId);
+      const assignerRole = req.user?.role;
+      const result = await schemaService.assignSchemaToUser(userId, schemaId, assignerRole);
       res.json({ success: true, ...result });
     } catch (error) {
       next(error);

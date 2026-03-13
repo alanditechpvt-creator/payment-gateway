@@ -21,6 +21,7 @@ import {
   UserGroupIcon,
   CurrencyRupeeIcon,
   BookOpenIcon,
+  ShieldCheckIcon,
 } from '@heroicons/react/24/outline';
 
 const navigation = [
@@ -35,6 +36,7 @@ const navigation = [
   { name: 'Payment Gateways', href: '/dashboard/gateways', icon: CreditCardIcon, permission: 'canManagePG' },
   { name: 'Schemas', href: '/dashboard/schemas', icon: ChartBarIcon, permission: 'canCreateSchema' },
   { name: 'Reports', href: '/dashboard/reports', icon: BuildingLibraryIcon, permission: 'canViewReports' },
+  { name: 'Security', href: '/dashboard/admin/security', icon: ShieldCheckIcon, roles: ['ADMIN', 'SUPER_ADMIN'] },
   { name: 'Settings', href: '/dashboard/settings', icon: Cog6ToothIcon },
 ];
 

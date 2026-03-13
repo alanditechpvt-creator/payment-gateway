@@ -1,15 +1,17 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { motion } from 'framer-motion';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { Chart as ChartJS, CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend } from 'chart.js';
+import { Bar } from 'react-chartjs-2';
 import { userApi, transactionApi, pgApi, schemaApi, rateApi, announcementApi } from '@/lib/api';
 import { useAuthStore } from '@/lib/store';
 import { format } from 'date-fns';
 import toast from 'react-hot-toast';
 
-// API Base URL - use environment variable or default to localhost
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4100';
+// API Base URL - must include /api path (e.g. http://localhost:4100/api)
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4100/api';
 import {
   UsersIcon,
   CreditCardIcon,
@@ -33,13 +35,112 @@ import {
   ChevronRightIcon,
   PencilIcon,
   ArrowLeftIcon,
+  InformationCircleIcon,
+  TrashIcon,
+  ArrowPathIcon,
+  BuildingLibraryIcon,
+  ArrowTrendingUpIcon,
+  ArrowTrendingDownIcon,
+  CalendarIcon,
 } from '@heroicons/react/24/outline';
 import { CheckIcon } from '@heroicons/react/24/solid';
 import { walletApi, ledgerApi, cardTypeApi } from '@/lib/api';
 import ChannelRateManager from './ChannelRateManager';
-import PGBaseRateManager from './PGBaseRateManager';
 
-type Tab = 'overview' | 'users' | 'transactions' | 'gateways' | 'cardtypes' | 'schemas' | 'wallet' | 'ledger' | 'announcements' | 'settings';
+ChartJS.register(CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend);
+
+function formatSupportedTypes(val: unknown): string {
+  if (val == null) return 'PAYIN, PAYOUT';
+  if (Array.isArray(val)) return val.map((t) => String(t).trim()).filter(Boolean).join(', ');
+  const s = String(val).trim();
+  if (!s) return 'PAYIN, PAYOUT';
+  try {
+    const parsed = JSON.parse(s);
+    if (Array.isArray(parsed)) return parsed.map((t: string) => String(t).trim()).filter(Boolean).join(', ');
+  } catch {
+    // not valid JSON
+  }
+  if (s.startsWith('[') && s.endsWith(']')) {
+    const inner = s.slice(1, -1).replace(/["']/g, '').split(',').map((t: string) => t.trim()).filter(Boolean);
+    if (inner.length) return inner.join(', ');
+  }
+  if (s.includes('PAYIN') || s.includes('PAYOUT')) {
+    const parts = s.split(/[,]+/).map((t: string) => t.replace(/["'[\]]/g, '').trim()).filter(Boolean);
+    if (parts.length) return parts.join(', ');
+  }
+  if (/\[.*PAYIN.*PAYOUT.*\]/.test(s) || /\[.*PAYOUT.*PAYIN.*\]/.test(s)) {
+    return 'PAYIN, PAYOUT';
+  }
+  return s;
+}
+
+function getPaymentIdFromTx(tx: any): string {
+  if (!tx?.pgResponse) return '';
+  try {
+    const pr = typeof tx.pgResponse === 'string' ? JSON.parse(tx.pgResponse) : tx.pgResponse;
+    return (
+      pr?.PAYMENT_ID ||
+      pr?.ORDERSTATUS?.PAYMENT_ID ||
+      pr?.payment_id ||
+      pr?.paymentId ||
+      pr?.razorpay_payment_id ||
+      pr?.bankTxnId ||
+      pr?.BankTxnId ||
+      pr?.sabpaisaTxnId ||
+      pr?.id ||
+      ''
+    );
+  } catch {
+    return '';
+  }
+}
+
+function escapeCsvCell(v: unknown): string {
+  if (v == null) return '';
+  const s = String(v);
+  if (s.includes('"') || s.includes(',') || s.includes('\n') || s.includes('\r')) {
+    return '"' + s.replace(/"/g, '""') + '"';
+  }
+  return s;
+}
+
+function buildTransactionsCsv(txList: any[]): string {
+  const headers = [
+    'Transaction ID',
+    'Payment ID',
+    'Gateway',
+    'Type',
+    'Amount',
+    'Status',
+    'Date',
+    'Customer Name',
+    'Customer Email',
+    'PG Charges',
+    'Commission',
+    'Net Amount',
+    'Beneficiary Name',
+  ];
+  const rows = txList.map((tx: any) => [
+    tx.transactionId ?? '',
+    getPaymentIdFromTx(tx),
+    tx.paymentGateway?.name ?? '',
+    tx.type ?? '',
+    tx.amount ?? '',
+    tx.status ?? '',
+    tx.createdAt ? format(new Date(tx.createdAt), 'yyyy-MM-dd HH:mm:ss') : '',
+    tx.customerName ?? '',
+    tx.customerEmail ?? '',
+    tx.pgCharges ?? '',
+    tx.platformCommission ?? '',
+    tx.netAmount ?? '',
+    tx.beneficiaryName ?? '',
+  ]);
+  const headerLine = headers.map(escapeCsvCell).join(',');
+  const dataLines = rows.map((row) => row.map(escapeCsvCell).join(','));
+  return [headerLine, ...dataLines].join('\r\n');
+}
+
+type Tab = 'overview' | 'users' | 'transactions' | 'reports' | 'gateways' | 'schemas' | 'wallet' | 'ledger' | 'announcements' | 'settings';
 
 export function AdminDashboard() {
   const { user, logout } = useAuthStore();
@@ -85,10 +186,10 @@ export function AdminDashboard() {
     { id: 'overview', name: 'Overview', icon: ChartBarIcon },
     { id: 'users', name: 'Users', icon: UsersIcon },
     { id: 'transactions', name: 'Transactions', icon: DocumentTextIcon },
+    { id: 'reports', name: 'Reports', icon: BuildingLibraryIcon },
     { id: 'wallet', name: 'Wallet Management', icon: WalletIcon },
     { id: 'ledger', name: 'Global Ledger', icon: BookOpenIcon },
     { id: 'gateways', name: 'Payment Gateways', icon: CreditCardIcon },
-    { id: 'cardtypes', name: 'Card Types', icon: CreditCardIcon },
     { id: 'schemas', name: 'Schemas', icon: ChartBarIcon },
     { id: 'announcements', name: 'Announcements', icon: MegaphoneIcon },
     { id: 'settings', name: 'Settings', icon: Cog6ToothIcon },
@@ -306,16 +407,16 @@ export function AdminDashboard() {
           <GatewaysTab />
         )}
         
-        {activeTab === 'cardtypes' && (
-          <CardTypesTab />
-        )}
-        
         {activeTab === 'schemas' && (
           <SchemasTab />
         )}
         
         {activeTab === 'transactions' && (
           <TransactionsTab />
+        )}
+
+        {activeTab === 'reports' && (
+          <ReportsTab users={usersData} />
         )}
         
         {activeTab === 'wallet' && (
@@ -358,8 +459,9 @@ function UsersTab({ users, schemas, onRefresh }: { users: any[]; schemas: any[];
   
   // Rate form state
   const [selectedPG, setSelectedPG] = useState('');
-  const [payinRate, setPayinRate] = useState('');
-  const [payoutRate, setPayoutRate] = useState('');
+  // Schema rate details modal (i button)
+  const [showSchemaRatesModal, setShowSchemaRatesModal] = useState(false);
+  const [schemaRatesModalData, setSchemaRatesModalData] = useState<{ schema: any; ratesByPG: Record<string, { paymentGateway: any; rates: any[] }> } | null>(null);
 
   // Fetch available PGs for rate assignment
   const { data: availablePGsData } = useQuery({
@@ -367,32 +469,46 @@ function UsersTab({ users, schemas, onRefresh }: { users: any[]; schemas: any[];
     queryFn: () => rateApi.getAvailablePGsForAssignment(),
   });
 
-  // Fetch selected user's rates
+  // Fetch selected user's PG assignments (admin can view any user; others only direct children)
   const { data: userRatesData, refetch: refetchUserRates } = useQuery({
     queryKey: ['user-rates', selectedUser?.id],
     queryFn: async () => {
       if (!selectedUser) return null;
-      const childrenRates = await rateApi.getChildrenRates();
-      const userData = childrenRates.data?.data?.find((c: any) => c.id === selectedUser.id);
-      return userData;
+      const res = await rateApi.getRatesForUser(selectedUser.id);
+      const rates = res.data?.data ?? [];
+      return { rates };
     },
     enabled: !!selectedUser && showRatesModal,
   });
 
   // Assign rate mutation
   const assignRateMutation = useMutation({
-    mutationFn: ({ targetUserId, pgId, payinRate, payoutRate }: any) =>
-      rateApi.assignRate(targetUserId, pgId, payinRate, payoutRate),
+    mutationFn: ({ targetUserId, pgId }: { targetUserId: string; pgId: string }) =>
+      rateApi.assignRate(targetUserId, pgId),
     onSuccess: () => {
-      toast.success('Rate assigned successfully!');
+      toast.success('Payment gateway assigned. Rates are from the user\'s schema.');
+      queryClient.invalidateQueries({ queryKey: ['user-rates'] });
       refetchUserRates();
       queryClient.invalidateQueries({ queryKey: ['children-rates'] });
       setSelectedPG('');
-      setPayinRate('');
-      setPayoutRate('');
     },
     onError: (error: any) => {
       toast.error(error.response?.data?.error || 'Failed to assign rate');
+    },
+  });
+
+  // Remove PG assignment mutation
+  const removePGMutation = useMutation({
+    mutationFn: ({ userId, pgId }: { userId: string; pgId: string }) =>
+      userApi.removePGAssignment(userId, pgId),
+    onSuccess: () => {
+      toast.success('Payment gateway removed from user.');
+      queryClient.invalidateQueries({ queryKey: ['user-rates'] });
+      refetchUserRates();
+      queryClient.invalidateQueries({ queryKey: ['children-rates'] });
+    },
+    onError: (error: any) => {
+      toast.error(error.response?.data?.error || 'Failed to remove gateway');
     },
   });
 
@@ -403,8 +519,6 @@ function UsersTab({ users, schemas, onRefresh }: { users: any[]; schemas: any[];
     setSelectedUser(u);
     setShowRatesModal(true);
     setSelectedPG('');
-    setPayinRate('');
-    setPayoutRate('');
   };
 
   const handleAssignRate = () => {
@@ -412,28 +526,9 @@ function UsersTab({ users, schemas, onRefresh }: { users: any[]; schemas: any[];
       toast.error('Please select a payment gateway');
       return;
     }
-    
-    const pg = availablePGs.find((p: any) => p.id === selectedPG);
-    if (!pg) return;
-    
-    const payinRateNum = parseFloat(payinRate) / 100;
-    const payoutRateNum = parseFloat(payoutRate) / 100;
-    
-    if (payinRateNum < pg.minPayinRate) {
-      toast.error(`Payin rate cannot be less than ${(pg.minPayinRate * 100).toFixed(2)}%`);
-      return;
-    }
-    
-    if (payoutRateNum < pg.minPayoutRate) {
-      toast.error(`Payout rate cannot be less than ${(pg.minPayoutRate * 100).toFixed(2)}%`);
-      return;
-    }
-    
     assignRateMutation.mutate({
       targetUserId: selectedUser.id,
       pgId: selectedPG,
-      payinRate: payinRateNum,
-      payoutRate: payoutRateNum,
     });
   };
   
@@ -815,12 +910,50 @@ function UsersTab({ users, schemas, onRefresh }: { users: any[]; schemas: any[];
             </div>
 
             <div className="p-6 space-y-6">
-              {/* Current Rates */}
+              {/* Schema (determines rates & commissions) */}
+              <div className="p-4 bg-white/5 rounded-xl border border-white/10">
+                <h3 className="text-lg font-medium text-white mb-2 flex items-center gap-2">
+                  Schema assigned
+                  {selectedUser?.schemaId && (
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        try {
+                          const res = await schemaApi.getSchemaPayinRates(selectedUser.schemaId);
+                          const data = res.data?.data;
+                          if (data) {
+                            setSchemaRatesModalData({ schema: data.schema, ratesByPG: data.ratesByPG || {} });
+                            setShowSchemaRatesModal(true);
+                          }
+                        } catch (e: any) {
+                          toast.error(e.response?.data?.error || 'Failed to load schema rates');
+                        }
+                      }}
+                      className="p-1 rounded-full hover:bg-white/10 text-white/70 hover:text-white"
+                      title="View schema rate details"
+                    >
+                      <InformationCircleIcon className="w-5 h-5" />
+                    </button>
+                  )}
+                </h3>
+                {selectedUser?.schemaId ? (
+                  <p className="text-white/80">
+                    {selectedUser.schema?.name || schemas.find((s: any) => s.id === selectedUser.schemaId)?.name || 'Unknown'} ({selectedUser.schema?.code || schemas.find((s: any) => s.id === selectedUser.schemaId)?.code || '-'})
+                  </p>
+                ) : (
+                  <p className="text-white/50">No schema assigned. Assign schema in user profile.</p>
+                )}
+                <p className="text-xs text-white/40 mt-2">
+                  Rates and commissions are based on the user&apos;s schema. Use (i) to see per-channel rates.
+                </p>
+              </div>
+
+              {/* Payment gateways assigned */}
               <div>
-                <h3 className="text-lg font-medium text-white mb-3">Current Assigned Rates</h3>
+                <h3 className="text-lg font-medium text-white mb-3">Payment gateways assigned</h3>
                 {userRates.length === 0 ? (
                   <div className="text-center py-6 bg-white/5 rounded-xl text-white/50">
-                    No rates assigned yet. Assign rates below.
+                    No payment gateways assigned yet. Assign one below.
                   </div>
                 ) : (
                   <div className="grid gap-3">
@@ -833,34 +966,29 @@ function UsersTab({ users, schemas, onRefresh }: { users: any[]; schemas: any[];
                           <p className="font-medium text-white">{rate.paymentGateway.name}</p>
                           <p className="text-sm text-white/50">{rate.paymentGateway.code}</p>
                         </div>
-                        <div className="text-right">
-                          <p className="text-emerald-400 font-mono">
-                            Payin: {(rate.payinRate * 100).toFixed(2)}%
-                          </p>
-                          <p className="text-blue-400 font-mono text-sm">
-                            Payout: {(rate.payoutRate * 100).toFixed(2)}%
-                          </p>
-                        </div>
-                        <div className="flex gap-2 ml-4">
+                        <div className="flex items-center gap-2">
                           <button
                             onClick={() => {
                               setSelectedPG(rate.paymentGateway.id);
                               setShowChannelRatesModal(true);
                             }}
-                            className="px-3 py-1.5 bg-blue-500/10 text-blue-400 rounded-lg text-sm hover:bg-blue-500/20 flex items-center gap-1"
+                            className="px-3 py-1.5 bg-primary-500/20 text-primary-400 rounded-lg text-sm hover:bg-primary-500/30 flex items-center gap-1"
+                            title="Per-channel payin rates (user overrides)"
                           >
-                            <CreditCardIcon className="w-4 h-4" />
-                            Channels
+                            Channel rates
                           </button>
                           <button
                             onClick={() => {
-                              setSelectedPG(rate.paymentGateway.id);
-                              setPayinRate((rate.payinRate * 100).toString());
-                              setPayoutRate((rate.payoutRate * 100).toString());
+                              if (selectedUser && confirm(`Remove ${rate.paymentGateway.name} from this user?`)) {
+                                removePGMutation.mutate({ userId: selectedUser.id, pgId: rate.paymentGateway.id });
+                              }
                             }}
-                            className="px-3 py-1.5 bg-amber-500/10 text-amber-400 rounded-lg text-sm hover:bg-amber-500/20"
+                            disabled={removePGMutation.isPending}
+                            className="px-3 py-1.5 bg-red-500/10 text-red-400 rounded-lg text-sm hover:bg-red-500/20 flex items-center gap-1"
+                            title="Remove gateway"
                           >
-                            Edit
+                            <TrashIcon className="w-4 h-4" />
+                            Remove
                           </button>
                         </div>
                       </div>
@@ -869,96 +997,34 @@ function UsersTab({ users, schemas, onRefresh }: { users: any[]; schemas: any[];
                 )}
               </div>
 
-              {/* Assign New Rate */}
+              {/* Assign payment gateway (rates from schema) */}
               <div className="pt-4 border-t border-white/10">
-                <h3 className="text-lg font-medium text-white mb-3">
-                  {selectedPG ? 'Update Rate' : 'Assign New Rate'}
-                </h3>
-                
+                <h3 className="text-lg font-medium text-white mb-3">Assign payment gateway</h3>
+                <p className="text-sm text-white/50 mb-3">Rates are taken from the user&apos;s schema. No need to enter payin/payout.</p>
                 <div className="space-y-4">
                   <div>
                     <label className="block text-sm text-white/60 mb-1">Payment Gateway</label>
                     <select
                       value={selectedPG}
-                      onChange={(e) => {
-                        setSelectedPG(e.target.value);
-                        const pg = availablePGs.find((p: any) => p.id === e.target.value);
-                        if (pg) {
-                          const existingRate = userRates.find((r: any) => r.paymentGateway.id === e.target.value);
-                          if (existingRate) {
-                            setPayinRate((existingRate.payinRate * 100).toString());
-                            setPayoutRate((existingRate.payoutRate * 100).toString());
-                          } else {
-                            setPayinRate((pg.minPayinRate * 100).toString());
-                            setPayoutRate((pg.minPayoutRate * 100).toString());
-                          }
-                        }
-                      }}
+                      onChange={(e) => setSelectedPG(e.target.value)}
                       className="select-field"
                     >
                       <option value="">Select Payment Gateway</option>
                       {availablePGs.map((pg: any) => (
                         <option key={pg.id} value={pg.id}>
-                          {pg.name} (Base: {(pg.minPayinRate * 100).toFixed(2)}%)
+                          {pg.name}
                         </option>
                       ))}
                     </select>
                   </div>
-
                   {selectedPG && (
-                    <>
-                      <div className="p-3 bg-emerald-500/10 rounded-lg border border-emerald-500/30 text-sm">
-                        <p className="text-emerald-400">
-                          PG Base Rate: {(availablePGs.find((p: any) => p.id === selectedPG)?.minPayinRate * 100 || 0).toFixed(2)}%
-                        </p>
-                        <p className="text-white/50 text-xs mt-1">
-                          This is what Admin pays. Assign a higher rate to earn commission.
-                        </p>
-                      </div>
-
-                      <div className="grid grid-cols-2 gap-4">
-                        <div>
-                          <label className="block text-sm text-white/60 mb-1">Payin Rate (%)</label>
-                          <input
-                            type="number"
-                            step="0.01"
-                            value={payinRate}
-                            onChange={(e) => setPayinRate(e.target.value)}
-                            className="input-field"
-                            placeholder="e.g., 1.5"
-                          />
-                          {payinRate && availablePGs.find((p: any) => p.id === selectedPG) && (
-                            <p className="text-xs text-emerald-400 mt-1">
-                              Admin profit: {(parseFloat(payinRate) - availablePGs.find((p: any) => p.id === selectedPG).minPayinRate * 100).toFixed(2)}%
-                            </p>
-                          )}
-                        </div>
-                        <div>
-                          <label className="block text-sm text-white/60 mb-1">Payout Rate (%)</label>
-                          <input
-                            type="number"
-                            step="0.01"
-                            value={payoutRate}
-                            onChange={(e) => setPayoutRate(e.target.value)}
-                            className="input-field"
-                            placeholder="e.g., 1.5"
-                          />
-                          {payoutRate && availablePGs.find((p: any) => p.id === selectedPG) && (
-                            <p className="text-xs text-blue-400 mt-1">
-                              Admin profit: {(parseFloat(payoutRate) - availablePGs.find((p: any) => p.id === selectedPG).minPayoutRate * 100).toFixed(2)}%
-                            </p>
-                          )}
-                        </div>
-                      </div>
-
-                      <button
-                        onClick={handleAssignRate}
-                        disabled={assignRateMutation.isPending || !payinRate || !payoutRate}
-                        className="w-full btn-primary"
-                      >
-                        {assignRateMutation.isPending ? 'Saving...' : 'Save Rate'}
-                      </button>
-                    </>
+                    <button
+                      onClick={handleAssignRate}
+                      disabled={assignRateMutation.isPending}
+                      className="w-full btn-primary"
+                    >
+                      {assignRateMutation.isPending ? 'Assigning...' : 'Assign gateway'}
+                    </button>
                   )}
                 </div>
               </div>
@@ -966,7 +1032,228 @@ function UsersTab({ users, schemas, onRefresh }: { users: any[]; schemas: any[];
           </motion.div>
         </div>
       )}
+
+      {/* Schema rate details modal (i button) */}
+      {showSchemaRatesModal && schemaRatesModalData && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[60]" onClick={() => setShowSchemaRatesModal(false)}>
+          <div
+            className="bg-[#1a1a2e] rounded-2xl p-6 w-full max-w-2xl max-h-[85vh] overflow-hidden border border-white/10 shadow-xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-semibold text-white">
+                Schema rate details: {schemaRatesModalData.schema?.name || schemaRatesModalData.schema?.code}
+              </h3>
+              <button
+                onClick={() => setShowSchemaRatesModal(false)}
+                className="p-2 rounded-lg hover:bg-white/10 text-white/70"
+              >
+                <XMarkIcon className="w-5 h-5" />
+              </button>
+            </div>
+            <p className="text-sm text-white/50 mb-4">
+              Per-channel payin rates applied to users on this schema. Commission is calculated from these rates.
+            </p>
+            <div className="overflow-y-auto max-h-[60vh] space-y-4">
+              {Object.entries(schemaRatesModalData.ratesByPG).map(([pgCode, pgData]: [string, any]) => (
+                <div key={pgCode} className="bg-white/5 rounded-xl p-4 border border-white/10">
+                  <h4 className="font-medium text-white mb-2">{pgData.paymentGateway?.name || pgCode}</h4>
+                  <div className="grid gap-1.5 text-sm">
+                    {(pgData.rates || []).map((r: any) => (
+                      <div key={r.id || r.channelId} className="flex justify-between text-white/80">
+                        <span>{r.channelName || r.channelCode}</span>
+                        <span className="font-mono text-emerald-400">{r.payinRateDisplay ?? `${(Number(r.payinRate) * 100).toFixed(2)}%`}</span>
+                      </div>
+                    ))}
+                    {(!pgData.rates || pgData.rates.length === 0) && (
+                      <p className="text-white/50">No channel rates defined</p>
+                    )}
+                  </div>
+                </div>
+              ))}
+              {Object.keys(schemaRatesModalData.ratesByPG).length === 0 && (
+                <p className="text-white/50">No rate details for this schema yet.</p>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Channel Rate Manager Modal */}
+      {showChannelRatesModal && selectedUser && selectedPG && (
+        <ChannelRateManager
+          userId={selectedUser.id}
+          pgId={selectedPG}
+          pgName={userRates.find((r: any) => r.paymentGateway?.id === selectedPG)?.paymentGateway?.name || ''}
+          onClose={() => {
+            setShowChannelRatesModal(false);
+            refetchUserRates();
+          }}
+        />
+      )}
     </motion.div>
+  );
+}
+
+function ChannelBasesModal({ pg, onClose, onSaved }: { pg: any; onClose: () => void; onSaved: () => void }) {
+  const queryClient = useQueryClient();
+  const { data, isLoading, refetch } = useQuery({
+    queryKey: ['admin-channels-bases', pg?.id],
+    queryFn: async () => {
+      const token = localStorage.getItem('adminAccessToken');
+      const res = await fetch(`${API_BASE_URL}/admin/channels?pgId=${encodeURIComponent(pg.id)}`, {
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      });
+      if (!res.ok) throw new Error('Failed to fetch channels');
+      const json = await res.json();
+      return json.data?.channels ?? [];
+    },
+    enabled: !!pg?.id,
+  });
+  const channels = data ?? [];
+  const [savingId, setSavingId] = useState<string | null>(null);
+  const [togglingId, setTogglingId] = useState<string | null>(null);
+  const [inputs, setInputs] = useState<Record<string, string>>({});
+
+  const getDisplayValue = (ch: any) => {
+    if (inputs[ch.id] !== undefined) return inputs[ch.id];
+    return (Number(ch.baseCost ?? 0.02) * 100).toFixed(2);
+  };
+
+  const saveBase = async (channelId: string, pctStr: string) => {
+    const val = parseFloat(pctStr);
+    if (isNaN(val) || val < 0 || val > 10) {
+      toast.error('Base must be between 0 and 10%');
+      return;
+    }
+    setSavingId(channelId);
+    try {
+      const token = localStorage.getItem('adminAccessToken');
+      const res = await fetch(`${API_BASE_URL}/admin/channels/${channelId}`, {
+        method: 'PUT',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ baseCost: val / 100 }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || 'Failed to update');
+      }
+      toast.success('Channel base updated');
+      refetch();
+      onSaved();
+    } catch (e: any) {
+      toast.error(e.message || 'Failed to update channel base');
+    } finally {
+      setSavingId(null);
+    }
+  };
+
+  const setChannelActive = async (channelId: string, isActive: boolean) => {
+    setTogglingId(channelId);
+    try {
+      const token = localStorage.getItem('adminAccessToken');
+      const res = await fetch(`${API_BASE_URL}/admin/channels/${channelId}`, {
+        method: 'PUT',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ isActive }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || 'Failed to update');
+      }
+      toast.success(isActive ? 'Channel enabled' : 'Channel disabled');
+      refetch();
+      queryClient.invalidateQueries({ queryKey: ['admin-channels-bases', pg?.id] });
+      queryClient.invalidateQueries({ queryKey: ['channels', pg?.id] });
+      onSaved();
+    } catch (e: any) {
+      toast.error(e.message || 'Failed to update channel');
+    } finally {
+      setTogglingId(null);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50" onClick={onClose}>
+      <motion.div
+        className="bg-[#1a1a2e] rounded-2xl p-6 w-full max-w-2xl border border-white/10 max-h-[85vh] overflow-y-auto"
+        onClick={(e) => e.stopPropagation()}
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+      >
+        <div className="flex items-center justify-between mb-4">
+          <div>
+            <h3 className="text-xl font-bold">Base rate per card type</h3>
+            <p className="text-white/60 text-sm mt-1">{pg.name} — set base rate and enable/disable each channel</p>
+          </div>
+          <button onClick={onClose} className="p-2 hover:bg-white/10 rounded-lg">
+            <XMarkIcon className="w-5 h-5" />
+          </button>
+        </div>
+        {isLoading ? (
+          <div className="py-8 text-center text-white/60">Loading channels...</div>
+        ) : channels.length === 0 ? (
+          <div className="py-8 text-center text-white/60">No PAYIN channels. Add channels for this PG first.</div>
+        ) : (
+          <div className="space-y-2">
+            {channels.filter((c: any) => c.transactionType === 'PAYIN').map((ch: any) => {
+              const isActive = ch.isActive !== false;
+              const isToggling = togglingId === ch.id;
+              return (
+                <div key={ch.id} className="flex items-center gap-4 py-2 border-b border-white/5">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="font-medium">{ch.name}</span>
+                      <span
+                        className={`text-xs px-2 py-0.5 rounded ${
+                          isActive ? 'bg-emerald-500/20 text-emerald-400' : 'bg-white/10 text-white/50'
+                        }`}
+                      >
+                        {isActive ? 'Enabled' : 'Disabled'}
+                      </span>
+                    </div>
+                    <div className="text-xs text-white/50 font-mono">{ch.code}</div>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <button
+                      type="button"
+                      onClick={() => setChannelActive(ch.id, !isActive)}
+                      disabled={isToggling}
+                      title={isActive ? 'Disable channel' : 'Enable channel'}
+                      className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors disabled:opacity-50 ${
+                        isActive
+                          ? 'bg-white/10 text-white/70 hover:bg-red-500/20 hover:text-red-400'
+                          : 'bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30'
+                      }`}
+                    >
+                      {isToggling ? '...' : isActive ? 'Disable' : 'Enable'}
+                    </button>
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      max="10"
+                      value={getDisplayValue(ch)}
+                      onChange={(e) => setInputs((prev) => ({ ...prev, [ch.id]: e.target.value }))}
+                      className="w-20 px-2 py-1.5 bg-white/5 border border-white/10 rounded-lg text-right"
+                    />
+                    <span className="text-white/50 text-sm">%</span>
+                    <button
+                      type="button"
+                      onClick={() => saveBase(ch.id, getDisplayValue(ch))}
+                      disabled={savingId === ch.id}
+                      className="px-3 py-1.5 bg-primary-500 hover:bg-primary-600 rounded-lg text-sm disabled:opacity-50"
+                    >
+                      {savingId === ch.id ? 'Saving...' : 'Save'}
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </motion.div>
+    </div>
   );
 }
 
@@ -974,8 +1261,8 @@ function GatewaysTab() {
   const queryClient = useQueryClient();
   const [showModal, setShowModal] = useState(false);
   const [editingPG, setEditingPG] = useState<any>(null);
-  
-  // Fetch gateways data directly in this component
+  const [channelBasesPG, setChannelBasesPG] = useState<any>(null);
+
   const { data: pgsData, isLoading } = useQuery({
     queryKey: ['admin-pgs'],
     queryFn: () => pgApi.getPGs(),
@@ -1040,11 +1327,13 @@ function GatewaysTab() {
 
   const openEditModal = (pg: any) => {
     setEditingPG(pg);
+    // Normalize so select value matches option (e.g. "PAYIN, PAYOUT" -> "PAYIN,PAYOUT")
+    const supported = (pg.supportedTypes || 'PAYIN,PAYOUT').replace(/\s+/g, '');
     setFormData({
       name: pg.name || '',
       code: pg.code || '',
       description: pg.description || '',
-      supportedTypes: pg.supportedTypes || 'PAYIN,PAYOUT',
+      supportedTypes: supported,
       isActive: pg.isActive,
     });
     setShowModal(true);
@@ -1057,11 +1346,12 @@ function GatewaysTab() {
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    const data = {
+    // Send supportedTypes as normalized string so backend stores correctly
+    const supportedTypesStr = (formData.supportedTypes || 'PAYIN,PAYOUT').replace(/\s+/g, '');
+    const data: any = {
       ...formData,
-      supportedTypes: formData.supportedTypes.split(','),
+      supportedTypes: editingPG ? supportedTypesStr : supportedTypesStr.split(','),
     };
-    
     if (editingPG) {
       updateMutation.mutate({ id: editingPG.id, data });
     } else {
@@ -1086,7 +1376,7 @@ function GatewaysTab() {
           Add Gateway
         </button>
       </div>
-      
+
       <div className="grid grid-cols-2 gap-6">
         {gateways.map((pg: any) => (
           <div key={pg.id} className="admin-card">
@@ -1108,16 +1398,7 @@ function GatewaysTab() {
               <div className="flex justify-between">
                 <span className="text-white/50">Supported Types</span>
                 <span>
-                  {(() => {
-                    try {
-                      const types = typeof pg.supportedTypes === 'string' 
-                        ? JSON.parse(pg.supportedTypes) 
-                        : pg.supportedTypes;
-                      return Array.isArray(types) ? types.join(', ') : types;
-                    } catch {
-                      return pg.supportedTypes || 'PAYIN, PAYOUT';
-                    }
-                  })()}
+                  {formatSupportedTypes(pg.supportedTypes)}
                 </span>
               </div>
               <div className="flex justify-between">
@@ -1129,11 +1410,17 @@ function GatewaysTab() {
                 <span>{pg._count?.userAssignments || 0} users</span>
               </div>
             </div>
-            <div className="mt-4 pt-4 border-t border-white/5 flex gap-2">
-              <button onClick={() => openEditModal(pg)} className="btn-secondary text-sm flex-1">Edit</button>
+            <div className="mt-4 pt-4 border-t border-white/5 flex gap-2 flex-wrap">
+              <button onClick={() => openEditModal(pg)} className="btn-secondary text-sm flex-1 min-w-0">Edit</button>
+              <button
+                onClick={() => setChannelBasesPG(pg)}
+                className="btn-secondary text-sm flex-1 min-w-0"
+              >
+                Channel bases
+              </button>
               <button 
                 onClick={() => toggleMutation.mutate({ id: pg.id, isActive: !pg.isActive })}
-                className={`text-sm flex-1 ${pg.isActive ? 'btn-danger' : 'btn-primary'}`}
+                className={`text-sm flex-1 min-w-0 ${pg.isActive ? 'btn-danger' : 'btn-primary'}`}
               >
                 {pg.isActive ? 'Disable' : 'Enable'}
               </button>
@@ -1141,6 +1428,15 @@ function GatewaysTab() {
           </div>
         ))}
       </div>
+
+      {/* Channel bases modal (base rate per card type per PG) */}
+      {channelBasesPG && (
+        <ChannelBasesModal
+          pg={channelBasesPG}
+          onClose={() => setChannelBasesPG(null)}
+          onSaved={() => queryClient.invalidateQueries({ queryKey: ['admin-pgs'] })}
+        />
+      )}
 
       {/* Create/Edit Modal */}
       {showModal && (
@@ -1193,7 +1489,8 @@ function GatewaysTab() {
                   placeholder="Payment gateway for cards and UPI"
                 />
               </div>
-              
+
+              <p className="text-xs text-white/50">Set base rate per card type under Channels (per PG).</p>
               <div>
                 <label className="block text-sm font-medium text-white/70 mb-1">Supported Types</label>
                 <select
@@ -1711,6 +2008,7 @@ function SchemasTab() {
     code: '',
     description: '',
     applicableRoles: 'WHITE_LABEL,MASTER_DISTRIBUTOR,DISTRIBUTOR,RETAILER',
+    payinRate: '2',
     isActive: true,
     isDefault: false,
   });
@@ -1752,6 +2050,7 @@ function SchemasTab() {
       code: '',
       description: '',
       applicableRoles: 'WHITE_LABEL,MASTER_DISTRIBUTOR,DISTRIBUTOR,RETAILER',
+      payinRate: '2',
       isActive: true,
       isDefault: false,
     });
@@ -1760,11 +2059,13 @@ function SchemasTab() {
 
   const openEditModal = (schema: any) => {
     setEditingSchema(schema);
+    const pr = schema.payinRate != null ? Number(schema.payinRate) * 100 : 2;
     setFormData({
       name: schema.name || '',
       code: schema.code || '',
       description: schema.description || '',
       applicableRoles: schema.applicableRoles || 'WHITE_LABEL,MASTER_DISTRIBUTOR,DISTRIBUTOR,RETAILER',
+      payinRate: String(pr),
       isActive: schema.isActive,
       isDefault: schema.isDefault,
     });
@@ -1783,10 +2084,19 @@ function SchemasTab() {
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    const payinRateNum = formData.payinRate ? parseFloat(formData.payinRate) / 100 : undefined;
+    const applicableRoles = typeof formData.applicableRoles === 'string'
+      ? formData.applicableRoles.split(',').map((s: string) => s.trim()).filter(Boolean)
+      : formData.applicableRoles;
+    const data = {
+      ...formData,
+      applicableRoles,
+      payinRate: payinRateNum,
+    };
     if (editingSchema) {
-      updateMutation.mutate({ id: editingSchema.id, data: formData });
+      updateMutation.mutate({ id: editingSchema.id, data });
     } else {
-      createMutation.mutate(formData);
+      createMutation.mutate(data);
     }
   };
 
@@ -1833,13 +2143,13 @@ function SchemasTab() {
                 <span>{schema._count?.users || 0}</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-white/50">PG Rates</span>
-                <span>{schema.pgRates?.length || 0} configured</span>
+                <span className="text-white/50">Schema rate</span>
+                <span>{(Number(schema.payinRate ?? 0.02) * 100).toFixed(2)}%</span>
               </div>
             </div>
             <div className="mt-4 pt-4 border-t border-white/5 flex gap-2">
               <button onClick={() => openEditModal(schema)} className="btn-secondary text-sm flex-1">Edit</button>
-              <button onClick={() => openRatesModal(schema)} className="btn-primary text-sm flex-1">Rates</button>
+              <button onClick={() => openRatesModal(schema)} className="btn-primary text-sm flex-1">Rates / Payout</button>
             </div>
           </div>
         ))}
@@ -1911,6 +2221,21 @@ function SchemasTab() {
                 </select>
               </div>
               
+              <div>
+                <label className="block text-sm font-medium text-white/70 mb-1">Schema rate (%)</label>
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  max="10"
+                  value={formData.payinRate}
+                  onChange={(e) => setFormData({ ...formData, payinRate: e.target.value })}
+                  className="w-full px-4 py-2 bg-white/5 border border-white/10 rounded-xl"
+                  placeholder="1.5"
+                />
+                <p className="text-xs text-white/50 mt-1">Single rate for this schema (e.g. RATE15 = 1.5%). Applied to all channels. PG base is set per gateway.</p>
+              </div>
+              
               <div className="flex items-center gap-4">
                 <label className="flex items-center gap-2">
                   <input
@@ -1965,15 +2290,41 @@ function SchemasTab() {
 }
 
 function TransactionsTab() {
+  const queryClient = useQueryClient();
   const [pgFilter, setPgFilter] = useState<string>('');
   const [typeFilter, setTypeFilter] = useState<string>('');
   const [statusFilter, setStatusFilter] = useState<string>('');
+  const [page, setPage] = useState(1);
   const [viewMode, setViewMode] = useState<'all' | 'grouped'>('all');
+  const [infoTransactionId, setInfoTransactionId] = useState<string | null>(null);
+  const [refreshingTxnId, setRefreshingTxnId] = useState<string | null>(null);
+  const exportInProgressRef = useRef(false);
+
+  const handleRefreshStatus = useCallback(async (transactionId: string) => {
+    setRefreshingTxnId(transactionId);
+    try {
+      const res = await transactionApi.checkPGStatus(transactionId);
+      const data = res?.data?.data;
+      const message = data?.message || (data?.autoUpdated ? 'Status updated.' : 'Status checked.');
+      toast.success(message);
+      queryClient.invalidateQueries({ queryKey: ['admin-transactions'] });
+      queryClient.invalidateQueries({ queryKey: ['admin-transaction', transactionId] });
+      if (infoTransactionId === transactionId) {
+        queryClient.invalidateQueries({ queryKey: ['admin-transaction', infoTransactionId] });
+      }
+    } catch (err: any) {
+      toast.error(err?.response?.data?.error || 'Failed to refresh status');
+    } finally {
+      setRefreshingTxnId(null);
+    }
+  }, [queryClient, infoTransactionId]);
   
+  const limit = 20;
   const { data, isLoading } = useQuery({
-    queryKey: ['admin-transactions', pgFilter, typeFilter, statusFilter],
+    queryKey: ['admin-transactions', page, pgFilter, typeFilter, statusFilter],
     queryFn: () => transactionApi.getTransactions({ 
-      limit: 100,
+      page,
+      limit,
       pgId: pgFilter || undefined,
       type: typeFilter || undefined,
       status: statusFilter || undefined,
@@ -1986,7 +2337,47 @@ function TransactionsTab() {
   });
   
   const transactions = data?.data?.data || [];
+  const pagination = data?.data?.pagination || { total: 0, totalPages: 1, page: 1, limit };
+  const totalPages = pagination.totalPages ?? 1;
+  const total = pagination.total ?? 0;
+  const from = total === 0 ? 0 : (pagination.page - 1) * pagination.limit + 1;
+  const to = Math.min(pagination.page * pagination.limit, total);
   const pgs = pgsData?.data?.data || pgsData?.data || [];
+
+  const handleExportCSV = useCallback(async () => {
+    if (exportInProgressRef.current) return;
+    exportInProgressRef.current = true;
+    try {
+      const res = await transactionApi.getTransactions({
+        page: 1,
+        limit: 10000,
+        pgId: pgFilter || undefined,
+        type: typeFilter || undefined,
+        status: statusFilter || undefined,
+      });
+      const list = res?.data?.data || [];
+      const csv = buildTransactionsCsv(list);
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `admin-transactions-${format(new Date(), 'yyyy-MM-dd-HHmm')}.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+      toast.success(`Exported ${list.length} transactions`);
+    } catch (err: any) {
+      toast.error(err?.response?.data?.error || 'Export failed');
+    } finally {
+      exportInProgressRef.current = false;
+    }
+  }, [pgFilter, typeFilter, statusFilter]);
+  
+  const { data: txDetailData } = useQuery({
+    queryKey: ['admin-transaction', infoTransactionId],
+    queryFn: () => transactionApi.getTransactionById(infoTransactionId!),
+    enabled: !!infoTransactionId,
+  });
+  const txDetail = txDetailData?.data?.data;
   
   // Group transactions by PG
   const groupedByPG = transactions.reduce((acc: any, tx: any) => {
@@ -2009,7 +2400,13 @@ function TransactionsTab() {
     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold">Transactions</h1>
-        <div className="flex gap-2">
+        <div className="flex items-center gap-2">
+          <button
+            onClick={handleExportCSV}
+            className="px-4 py-2 rounded-lg text-sm font-medium bg-white/5 text-white/80 hover:bg-white/10 border border-white/10"
+          >
+            Export CSV
+          </button>
           <button
             onClick={() => setViewMode('all')}
             className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${
@@ -2034,7 +2431,7 @@ function TransactionsTab() {
         <div className="flex flex-wrap gap-4">
           <select
             value={pgFilter}
-            onChange={(e) => setPgFilter(e.target.value)}
+            onChange={(e) => { setPgFilter(e.target.value); setPage(1); }}
             className="px-4 py-2.5 bg-white/5 border border-white/10 rounded-xl text-white focus:outline-none focus:ring-2 focus:ring-primary-500/50"
           >
             <option value="">All Payment Gateways</option>
@@ -2044,7 +2441,7 @@ function TransactionsTab() {
           </select>
           <select
             value={typeFilter}
-            onChange={(e) => setTypeFilter(e.target.value)}
+            onChange={(e) => { setTypeFilter(e.target.value); setPage(1); }}
             className="px-4 py-2.5 bg-white/5 border border-white/10 rounded-xl text-white focus:outline-none focus:ring-2 focus:ring-primary-500/50"
           >
             <option value="">All Types</option>
@@ -2053,7 +2450,7 @@ function TransactionsTab() {
           </select>
           <select
             value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value)}
+            onChange={(e) => { setStatusFilter(e.target.value); setPage(1); }}
             className="px-4 py-2.5 bg-white/5 border border-white/10 rounded-xl text-white focus:outline-none focus:ring-2 focus:ring-primary-500/50"
           >
             <option value="">All Status</option>
@@ -2156,22 +2553,26 @@ function TransactionsTab() {
               <p>No transactions found</p>
             </div>
           ) : (
-            <table className="w-full">
-              <thead className="bg-white/5">
-                <tr className="text-left text-white/50 text-sm">
-                  <th className="px-6 py-4 font-medium">Transaction ID</th>
-                  <th className="px-6 py-4 font-medium">Gateway</th>
-                  <th className="px-6 py-4 font-medium">User</th>
-                  <th className="px-6 py-4 font-medium">Type</th>
-                  <th className="px-6 py-4 font-medium">Amount</th>
-                  <th className="px-6 py-4 font-medium">Status</th>
-                  <th className="px-6 py-4 font-medium">Date</th>
-                </tr>
-              </thead>
-              <tbody>
-                {transactions.map((tx: any) => (
+            <>
+              <table className="w-full">
+                <thead className="bg-white/5">
+                  <tr className="text-left text-white/50 text-sm">
+                    <th className="px-6 py-4 font-medium">Transaction ID</th>
+                    <th className="px-6 py-4 font-medium">Payment ID</th>
+                    <th className="px-6 py-4 font-medium">Gateway</th>
+                    <th className="px-6 py-4 font-medium">User</th>
+                    <th className="px-6 py-4 font-medium">Type</th>
+                    <th className="px-6 py-4 font-medium">Amount</th>
+                    <th className="px-6 py-4 font-medium">Status</th>
+                    <th className="px-6 py-4 font-medium">Date</th>
+                    <th className="px-6 py-4 font-medium w-12"></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {transactions.map((tx: any) => (
                   <tr key={tx.id} className="table-row">
                     <td className="px-6 py-4 font-mono text-sm">{tx.transactionId}</td>
+                    <td className="px-6 py-4 font-mono text-sm text-white/70">{getPaymentIdFromTx(tx) || '–'}</td>
                     <td className="px-6 py-4">
                       <span className="px-2 py-1 rounded-lg bg-primary-500/10 text-primary-400 text-xs font-medium">
                         {tx.paymentGateway?.name || '-'}
@@ -2196,13 +2597,370 @@ function TransactionsTab() {
                     <td className="px-6 py-4 text-white/50">
                       {format(new Date(tx.createdAt), 'MMM d, yyyy HH:mm')}
                     </td>
+                    <td className="px-6 py-4">
+                      <div className="flex items-center gap-1">
+                        {tx.status === 'PENDING' && (
+                          <button
+                            type="button"
+                            onClick={(e) => { e.stopPropagation(); handleRefreshStatus(tx.transactionId); }}
+                            disabled={refreshingTxnId === tx.transactionId}
+                            className="p-1.5 rounded-lg hover:bg-amber-500/20 text-amber-400 hover:text-amber-300 disabled:opacity-50"
+                            title="Refresh status from gateway"
+                          >
+                            <ArrowPathIcon className={`w-5 h-5 ${refreshingTxnId === tx.transactionId ? 'animate-spin' : ''}`} />
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => setInfoTransactionId(tx.transactionId)}
+                          className="p-1.5 rounded-lg hover:bg-white/10 text-white/50 hover:text-white"
+                          title="View details"
+                        >
+                          <InformationCircleIcon className="w-5 h-5" />
+                        </button>
+                      </div>
+                    </td>
                   </tr>
                 ))}
               </tbody>
             </table>
+            {totalPages > 1 && (
+              <div className="flex items-center justify-between px-6 py-4 border-t border-white/5">
+                <p className="text-sm text-white/50">
+                  Showing {from}–{to} of {total}
+                </p>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => setPage((p) => Math.max(1, p - 1))}
+                    disabled={page === 1}
+                    className="p-2 rounded-lg bg-white/5 hover:bg-white/10 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    <ChevronLeftIcon className="w-5 h-5" />
+                  </button>
+                  <button
+                    onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                    disabled={page >= totalPages}
+                    className="p-2 rounded-lg bg-white/5 hover:bg-white/10 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    <ChevronRightIcon className="w-5 h-5" />
+                  </button>
+                </div>
+              </div>
+            )}
+            </>
           )}
         </div>
       )}
+
+      {/* Transaction details modal */}
+      {infoTransactionId && (
+        <div
+          className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[70] p-4"
+          onClick={() => setInfoTransactionId(null)}
+        >
+          <div
+            className="bg-[#1a1a2e] rounded-2xl border border-white/10 shadow-xl w-full max-w-2xl max-h-[90vh] overflow-hidden flex flex-col"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between p-4 border-b border-white/10">
+              <h3 className="text-lg font-semibold text-white">Transaction details</h3>
+              <button
+                type="button"
+                onClick={() => setInfoTransactionId(null)}
+                className="p-2 rounded-lg hover:bg-white/10 text-white/70"
+              >
+                <XMarkIcon className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="overflow-y-auto p-4 space-y-4">
+              {!txDetail && txDetailData !== undefined ? (
+                <div className="text-center py-8 text-white/50">Loading…</div>
+              ) : txDetail ? (
+                <>
+                  <div className="grid grid-cols-2 gap-3 text-sm">
+                    <div className="text-white/50">Transaction ID</div>
+                    <div className="font-mono text-white">{txDetail.transactionId}</div>
+                    {(() => {
+                      let paymentId = '';
+                      if (txDetail.pgResponse) {
+                        try {
+                          const pr = typeof txDetail.pgResponse === 'string' ? JSON.parse(txDetail.pgResponse) : txDetail.pgResponse;
+                          paymentId = pr?.PAYMENT_ID || pr?.ORDERSTATUS?.PAYMENT_ID || pr?.payment_id || pr?.paymentId || pr?.razorpay_payment_id || pr?.bankTxnId || pr?.BankTxnId || pr?.sabpaisaTxnId || pr?.id || '';
+                        } catch { /* ignore */ }
+                      }
+                      return paymentId ? (
+                        <>
+                          <div className="text-white/50">Payment ID (PG)</div>
+                          <div className="font-mono text-white">{paymentId}</div>
+                        </>
+                      ) : null;
+                    })()}
+                    <div className="text-white/50">Gateway</div>
+                    <div className="text-white">{txDetail.paymentGateway?.name || '-'}</div>
+                    <div className="text-white/50">User</div>
+                    <div className="text-white">{txDetail.initiator?.email || '-'}</div>
+                    <div className="text-white/50">Type</div>
+                    <div className="text-white">{txDetail.type}</div>
+                    <div className="text-white/50">Amount</div>
+                    <div className="font-semibold text-white">₹{Number(txDetail.amount)?.toLocaleString()}</div>
+                    <div className="text-white/50">Status</div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-white">{txDetail.status}</span>
+                      {txDetail.status === 'PENDING' && (
+                        <button
+                          type="button"
+                          onClick={() => handleRefreshStatus(txDetail.transactionId)}
+                          disabled={refreshingTxnId === txDetail.transactionId}
+                          className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-amber-500/20 text-amber-400 hover:bg-amber-500/30 text-sm font-medium disabled:opacity-50"
+                          title="Refresh status from payment gateway"
+                        >
+                          <ArrowPathIcon className={`w-4 h-4 ${refreshingTxnId === txDetail.transactionId ? 'animate-spin' : ''}`} />
+                          Refresh status
+                        </button>
+                      )}
+                    </div>
+                    <div className="text-white/50">Date</div>
+                    <div className="text-white">{format(new Date(txDetail.createdAt), 'PPpp')}</div>
+                    <div className="text-white/50">Card / Channel</div>
+                    <div className="text-white">
+                      {txDetail.transactionChannel
+                        ? `${txDetail.transactionChannel.name || txDetail.transactionChannel.code || '-'} (${txDetail.transactionChannel.code || ''})`
+                        : txDetail.rawPaymentMethod || '-'}
+                    </div>
+                    <div className="text-white/50">PG charges</div>
+                    <div className="text-white">₹{Number(txDetail.pgCharges ?? 0).toFixed(2)}</div>
+                    <div className="text-white/50">Commission deducted</div>
+                    <div className="text-amber-400">₹{Number(txDetail.platformCommission ?? 0).toFixed(2)}</div>
+                    <div className="text-white/50">Net amount</div>
+                    <div className="text-emerald-400 font-medium">₹{Number(txDetail.netAmount ?? 0).toFixed(2)}</div>
+                  </div>
+                  {Array.isArray(txDetail.commissions) && txDetail.commissions.length > 0 && (
+                    <div>
+                      <h4 className="text-white/70 font-medium mb-2">Commission breakdown</h4>
+                      <ul className="space-y-1 text-sm">
+                        {txDetail.commissions.map((c: any) => (
+                          <li key={c.id} className="flex justify-between text-white/80">
+                            <span>{c.user?.email || c.userId}</span>
+                            <span>₹{Number(c.amount).toFixed(2)} ({(Number(c.rate) * 100).toFixed(2)}%)</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                  {txDetail.pgResponse && (
+                    <div>
+                      <h4 className="text-white/70 font-medium mb-2">PG response</h4>
+                      <pre className="p-3 bg-black/30 rounded-lg text-xs text-white/80 overflow-x-auto max-h-48 overflow-y-auto">
+                        {(() => {
+                          try {
+                            return JSON.stringify(JSON.parse(txDetail.pgResponse), null, 2);
+                          } catch {
+                            return String(txDetail.pgResponse);
+                          }
+                        })()}
+                      </pre>
+                    </div>
+                  )}
+                </>
+              ) : (
+                <div className="text-center py-8 text-white/50">Could not load transaction.</div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+    </motion.div>
+  );
+}
+
+const reportsChartOptions = {
+  responsive: true,
+  maintainAspectRatio: false,
+  plugins: { legend: { position: 'top' as const } },
+  scales: {
+    x: { grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: 'rgba(255,255,255,0.7)' } },
+    y: { grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: 'rgba(255,255,255,0.7)' } },
+  },
+};
+
+function ReportsTab({ users }: { users: any[] }) {
+  const [dateRange, setDateRange] = useState('24h');
+  const [entityId, setEntityId] = useState<string>('');
+
+  const { data: statsData, isLoading } = useQuery({
+    queryKey: ['admin-reports-stats', dateRange, entityId],
+    queryFn: () => transactionApi.getStats({ range: dateRange, entityId: entityId || undefined }),
+  });
+
+  const stats = statsData?.data?.data || {};
+  const entityOptions = useMemo(() => {
+    const list = [{ id: '', label: 'All (platform)' }];
+    (users || []).forEach((u: any) => {
+      const name = [u.firstName, u.lastName].filter(Boolean).join(' ') || u.email || u.id;
+      list.push({ id: u.id, label: name });
+    });
+    return list;
+  }, [users]);
+  const selectedEntityLabel = entityId ? entityOptions.find((o) => o.id === entityId)?.label : null;
+
+  const summaryCards = [
+    { title: 'Total Payin', value: `₹${Number(stats.totalPayin ?? 0).toLocaleString()}`, icon: ArrowTrendingDownIcon, color: 'from-emerald-500 to-emerald-600' },
+    { title: 'Total Payout', value: `₹${Number(stats.totalPayout ?? 0).toLocaleString()}`, icon: ArrowTrendingUpIcon, color: 'from-orange-500 to-orange-600' },
+    { title: 'Commission Earned', value: `₹${Number(stats.totalCommission ?? 0).toLocaleString()}`, icon: BanknotesIcon, color: 'from-purple-500 to-purple-600' },
+    { title: 'Total Transactions', value: Number(stats.totalTransactions ?? 0).toLocaleString(), icon: CreditCardIcon, color: 'from-blue-500 to-blue-600' },
+  ];
+
+  const dailyBreakdown: Array<{ date: string; payinAmount: number; payoutAmount: number }> = stats.dailyBreakdown || [];
+  const chartData = useMemo(() => {
+    const labels = dailyBreakdown.map((d) => {
+      const parts = d.date.split('-');
+      return parts.length >= 3 ? `${parts[2]}/${parts[1]}` : d.date;
+    });
+    return {
+      labels,
+      datasets: [
+        { label: 'Payin (₹)', data: dailyBreakdown.map((d) => d.payinAmount), backgroundColor: 'rgba(16, 185, 129, 0.7)', borderColor: 'rgb(16, 185, 129)', borderWidth: 1 },
+        { label: 'Payout (₹)', data: dailyBreakdown.map((d) => d.payoutAmount), backgroundColor: 'rgba(249, 115, 22, 0.7)', borderColor: 'rgb(249, 115, 22)', borderWidth: 1 },
+      ],
+    };
+  }, [dailyBreakdown]);
+
+  const totalTransactions = Number(stats.totalTransactions ?? 0);
+
+  return (
+    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-6">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-bold">Reports</h1>
+          <p className="text-white/50">
+            {selectedEntityLabel ? `Report for: ${selectedEntityLabel}` : 'Platform transaction reports and analytics'}
+          </p>
+        </div>
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="flex flex-col gap-1">
+            <label className="text-xs text-white/50">View by user</label>
+            <select
+              value={entityId}
+              onChange={(e) => setEntityId(e.target.value)}
+              className="px-3 py-2 rounded-xl bg-white/5 border border-white/10 text-white focus:outline-none focus:ring-2 focus:ring-primary-500/50 text-sm min-w-[200px]"
+            >
+              {entityOptions.map((opt) => (
+                <option key={opt.id || 'all'} value={opt.id}>{opt.label}</option>
+              ))}
+            </select>
+          </div>
+          <div className="flex flex-col gap-1">
+            <label className="text-xs text-white/50">Period</label>
+            <div className="flex items-center gap-2 bg-white/5 rounded-xl p-1">
+              {[{ value: '24h', label: '24h' }, { value: '7d', label: '7d' }, { value: '30d', label: '30d' }, { value: '90d', label: '90d' }].map((option) => (
+                <button
+                  key={option.value}
+                  onClick={() => setDateRange(option.value)}
+                  className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${dateRange === option.value ? 'bg-primary-500 text-white' : 'text-white/60 hover:text-white hover:bg-white/10'}`}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        {summaryCards.map((card, index) => (
+          <motion.div
+            key={card.title}
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: index * 0.1 }}
+            className="admin-card p-6 relative overflow-hidden"
+          >
+            <div className={`absolute top-0 right-0 w-24 h-24 bg-gradient-to-br ${card.color} opacity-10 rounded-full -translate-y-1/2 translate-x-1/2`} />
+            <div className="flex items-start justify-between mb-4">
+              <div className={`w-12 h-12 rounded-xl bg-gradient-to-br ${card.color} flex items-center justify-center`}>
+                <card.icon className="w-6 h-6 text-white" />
+              </div>
+            </div>
+            <h3 className="text-sm text-white/50 mb-1">{card.title}</h3>
+            {isLoading ? <div className="h-8 w-24 bg-white/10 rounded animate-pulse" /> : <p className="text-2xl font-bold">{card.value}</p>}
+          </motion.div>
+        ))}
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div className="admin-card p-6">
+          <h3 className="font-semibold mb-4 flex items-center gap-2">
+            <ChartBarIcon className="w-5 h-5 text-primary-400" />
+            Transaction Volume (Payin vs Payout)
+          </h3>
+          <div className="h-64">
+            {dailyBreakdown.length > 0 ? (
+              <Bar data={chartData} options={reportsChartOptions} />
+            ) : (
+              <div className="h-full flex items-center justify-center text-white/40 text-sm">{isLoading ? 'Loading...' : 'No data in this period'}</div>
+            )}
+          </div>
+        </div>
+        <div className="admin-card p-6">
+          <h3 className="font-semibold mb-4 flex items-center gap-2">
+            <CreditCardIcon className="w-5 h-5 text-primary-400" />
+            Transaction Type Distribution
+          </h3>
+          <div className="space-y-4">
+            <div>
+              <div className="flex justify-between text-sm mb-2">
+                <span className="text-white/70">Payin</span>
+                <span className="font-medium">{stats.payinCount ?? 0} transactions</span>
+              </div>
+              <div className="h-3 bg-white/10 rounded-full overflow-hidden">
+                <div className="h-full bg-gradient-to-r from-emerald-500 to-emerald-600 rounded-full transition-all" style={{ width: `${totalTransactions ? ((stats.payinCount ?? 0) / totalTransactions) * 100 : 0}%` }} />
+              </div>
+            </div>
+            <div>
+              <div className="flex justify-between text-sm mb-2">
+                <span className="text-white/70">Payout</span>
+                <span className="font-medium">{stats.payoutCount ?? 0} transactions</span>
+              </div>
+              <div className="h-3 bg-white/10 rounded-full overflow-hidden">
+                <div className="h-full bg-gradient-to-r from-orange-500 to-orange-600 rounded-full transition-all" style={{ width: `${totalTransactions ? ((stats.payoutCount ?? 0) / totalTransactions) * 100 : 0}%` }} />
+              </div>
+            </div>
+          </div>
+          <div className="mt-6 pt-6 border-t border-white/5">
+            <div className="grid grid-cols-2 gap-4 text-sm">
+              <div className="bg-white/5 rounded-xl p-4">
+                <p className="text-white/50">Success Rate</p>
+                <p className="text-xl font-bold text-emerald-400">{stats.successRate ?? 0}%</p>
+              </div>
+              <div className="bg-white/5 rounded-xl p-4">
+                <p className="text-white/50">Avg. Amount</p>
+                <p className="text-xl font-bold">₹{Number(stats.avgAmount ?? 0).toLocaleString()}</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="admin-card p-6">
+        <h3 className="font-semibold mb-4 flex items-center gap-2">
+          <CalendarIcon className="w-5 h-5 text-primary-400" />
+          Today&apos;s Summary
+        </h3>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="bg-white/5 rounded-xl p-4">
+            <p className="text-sm text-white/50 mb-1">Today&apos;s Transactions</p>
+            <p className="text-2xl font-bold">{stats.todayCount ?? 0}</p>
+          </div>
+          <div className="bg-white/5 rounded-xl p-4">
+            <p className="text-sm text-white/50 mb-1">Today&apos;s Volume</p>
+            <p className="text-2xl font-bold">₹{Number(stats.todayVolume ?? 0).toLocaleString()}</p>
+          </div>
+          <div className="bg-white/5 rounded-xl p-4">
+            <p className="text-sm text-white/50 mb-1">Today&apos;s Commission</p>
+            <p className="text-2xl font-bold text-emerald-400">₹{Number(stats.todayCommission ?? 0).toLocaleString()}</p>
+          </div>
+        </div>
+      </div>
     </motion.div>
   );
 }
@@ -2898,6 +3656,8 @@ function AnnouncementsTab() {
   );
 }
 
+import { SecurityTab } from './SecurityTab';
+
 function SettingsTab() {
   const { user } = useAuthStore();
   const [currentPassword, setCurrentPassword] = useState('');
@@ -2937,11 +3697,6 @@ function SettingsTab() {
     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-6">
       <h1 className="text-2xl font-bold">Settings</h1>
 
-      {/* PG Base Rate Manager - Admin Only */}
-      <div className="mb-6">
-        <PGBaseRateManager />
-      </div>
-      
       <div className="grid grid-cols-2 gap-6">
         {/* Profile Info */}
         <div className="admin-card">
@@ -3040,6 +3795,11 @@ function SettingsTab() {
           </div>
         </div>
       </div>
+
+      {/* Security settings embedded under Settings */}
+      <div className="admin-card">
+        <SecurityTab />
+      </div>
     </motion.div>
   );
 }
@@ -3048,6 +3808,36 @@ function GlobalLedgerTab({ users }: { users: any[] }) {
   const [page, setPage] = useState(1);
   const [filterType, setFilterType] = useState('');
   const [filterUserId, setFilterUserId] = useState('');
+  const exportInProgressRef = useRef(false);
+
+  const handleExportLedger = useCallback(async (format: 'csv' | 'json') => {
+    if (exportInProgressRef.current) return;
+    exportInProgressRef.current = true;
+    try {
+      const response = await ledgerApi.exportGlobalLedger({
+        format,
+        type: filterType || undefined,
+        userId: filterUserId || undefined,
+      });
+      const blob = response.data instanceof Blob
+        ? response.data
+        : new Blob([response.data], { type: format === 'csv' ? 'text/csv' : 'application/json' });
+      const disposition = response.headers?.['content-disposition'];
+      const filenameMatch = disposition?.match(/filename="?([^";\n]+)"?/);
+      const filename = filenameMatch?.[1] || `global-ledger_${format(new Date(), 'yyyy-MM-dd')}.${format}`;
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      a.click();
+      URL.revokeObjectURL(url);
+      toast.success(`Ledger exported as ${format.toUpperCase()}`);
+    } catch (err: any) {
+      toast.error(err?.response?.data?.message || 'Export failed');
+    } finally {
+      exportInProgressRef.current = false;
+    }
+  }, [filterType, filterUserId]);
   
   const { data, isLoading } = useQuery({
     queryKey: ['global-ledger', page, filterType, filterUserId],
@@ -3083,6 +3873,22 @@ function GlobalLedgerTab({ users }: { users: any[] }) {
           <BookOpenIcon className="w-8 h-8 text-primary-400" />
           Global Ledger
         </h1>
+        <div className="flex gap-2">
+          <button
+            type="button"
+            onClick={() => handleExportLedger('csv')}
+            className="px-4 py-2 rounded-lg text-sm font-medium bg-white/5 text-white/80 hover:bg-white/10 border border-white/10"
+          >
+            Export CSV
+          </button>
+          <button
+            type="button"
+            onClick={() => handleExportLedger('json')}
+            className="px-4 py-2 rounded-lg text-sm font-medium bg-white/5 text-white/80 hover:bg-white/10 border border-white/10"
+          >
+            Export JSON
+          </button>
+        </div>
       </div>
       
       {/* Summary */}
@@ -3276,11 +4082,6 @@ function SchemaRatesModal({ schema, allPGs, onClose }: { schema: any; allPGs: an
   const [channelRateInput, setChannelRateInput] = useState('');
   const [editingResponseCodes, setEditingResponseCodes] = useState<any>(null);
   const [responseCodesInput, setResponseCodesInput] = useState<string>('');
-  
-  console.log('[MODAL DEBUG] allPGs:', allPGs);
-  console.log('[MODAL DEBUG] selectedPG:', selectedPG);
-  console.log('[MODAL DEBUG] view:', view);
-  
   // Payout configuration states
   const [payoutChargeType, setPayoutChargeType] = useState<'PERCENTAGE' | 'SLAB'>('SLAB');
   const [payoutRate, setPayoutRate] = useState('');
@@ -3288,32 +4089,25 @@ function SchemaRatesModal({ schema, allPGs, onClose }: { schema: any; allPGs: an
     { minAmount: '0', maxAmount: '5000', flatFee: '10' },
   ]);
 
-  // Fetch all channels for the selected PG
-  const { data: channels, isLoading: channelsLoading } = useQuery({
-    queryKey: ['channels', selectedPG?.id],
+  // Fetch channels for the selected PG; activeOnly so schema rate list shows only enabled channels
+  const { data: channels, isLoading: channelsLoading, isError: channelsError, error: channelsErrorDetail } = useQuery({
+    queryKey: ['channels', selectedPG?.id, 'activeOnly'],
     queryFn: async () => {
-      if (!selectedPG || !selectedPG.id) {
-        console.log('[DEBUG] No selectedPG or PG ID:', selectedPG);
-        return [];
-      }
-      console.log('[DEBUG] Fetching channels for PG:', selectedPG.id, selectedPG.name);
+      if (!selectedPG || !selectedPG.id) return [];
       const token = localStorage.getItem('adminAccessToken');
-      const response = await fetch(
-        `${API_BASE_URL}/admin/channels?pgId=${selectedPG.id}`,
-        {
-          headers: {
-            'Authorization': `Bearer ${token}`,
-            'Content-Type': 'application/json'
-          }
+      const url = `${API_BASE_URL}/admin/channels?pgId=${encodeURIComponent(selectedPG.id)}&activeOnly=true`;
+      const response = await fetch(url, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
         }
-      );
-      if (!response.ok) throw new Error('Failed to fetch channels');
+      });
+      if (!response.ok) {
+        const errBody = await response.json().catch(() => ({}));
+        throw new Error(errBody.error || `Failed to fetch channels (${response.status})`);
+      }
       const result = await response.json();
-      console.log('[DEBUG] Channels response:', result);
-      console.log('[DEBUG] result.data:', result.data);
-      console.log('[DEBUG] result.data.channels:', result.data.channels);
-      console.log('[DEBUG] Array check:', Array.isArray(result.data.channels));
-      return result.data.channels || [];
+      return result.data?.channels ?? [];
     },
     enabled: !!selectedPG && !!selectedPG.id,
   });
@@ -3378,10 +4172,15 @@ function SchemaRatesModal({ schema, allPGs, onClose }: { schema: any; allPGs: an
     }
   }, [payoutConfig]);
 
-  // Mutation for setting channel payin rate
-  const setRateMutation = useMutation({
-    mutationFn: async ({ channelId, rate }: { channelId: string; rate: number }) => {
+  // Mutation for setting channel payin rate (base + successor/user rate)
+  const setRateMutation = useMutation<
+    unknown,
+    Error,
+    { channelId: string; payinRate: number }
+  >({
+    mutationFn: async ({ channelId, payinRate }) => {
       const token = localStorage.getItem('adminAccessToken');
+      const body = { channelId, payinRate: payinRate / 100 };
       const response = await fetch(
         `${API_BASE_URL}/admin/channels/schemas/${schema.id}/payin-rates`,
         {
@@ -3390,7 +4189,7 @@ function SchemaRatesModal({ schema, allPGs, onClose }: { schema: any; allPGs: an
             'Authorization': `Bearer ${token}`,
             'Content-Type': 'application/json'
           },
-          body: JSON.stringify({ channelId, payinRate: rate / 100 }),
+          body: JSON.stringify(body),
         }
       );
       if (!response.ok) {
@@ -3502,15 +4301,15 @@ function SchemaRatesModal({ schema, allPGs, onClose }: { schema: any; allPGs: an
 
   const handleSaveChannelRate = () => {
     if (!editingChannel || !channelRateInput) {
-      toast.error('Please enter a valid rate');
+      toast.error('Please enter a valid user rate');
       return;
     }
-    const rate = parseFloat(channelRateInput);
-    if (rate < 0) {
+    const payinRate = parseFloat(channelRateInput);
+    if (payinRate < 0) {
       toast.error('Rate must be positive');
       return;
     }
-    setRateMutation.mutate({ channelId: editingChannel.id, rate });
+    setRateMutation.mutate({ channelId: editingChannel.id, payinRate });
   };
 
   const handleSavePayoutConfig = () => {
@@ -3525,17 +4324,23 @@ function SchemaRatesModal({ schema, allPGs, onClose }: { schema: any; allPGs: an
     setPayoutMutation.mutate();
   };
 
-  // Get current rate for a channel
+  // Get current user (successor) rate for a channel
   const getChannelRate = (channelId: string) => {
-    console.log('[DEBUG] getChannelRate - channelId:', channelId, 'schemaRatesData:', schemaRatesData);
     if (!schemaRatesData?.rates) return null;
     const rateConfig = schemaRatesData.rates.find((r: any) => r.channelId === channelId);
-    console.log('[DEBUG] Found rate config:', rateConfig);
     return rateConfig ? (rateConfig.payinRate * 100).toFixed(2) : null;
   };
+  // Get current base rate for a channel
+  const getChannelBaseRate = (channelId: string) => {
+    if (!schemaRatesData?.rates) return null;
+    const rateConfig = schemaRatesData.rates.find((r: any) => r.channelId === channelId);
+    return rateConfig?.baseRate != null ? (rateConfig.baseRate * 100).toFixed(2) : null;
+  };
 
+  // Only show active channels in schema rate/config views (disabled at PG level are hidden)
+  const activeChannels = channels?.filter((c: any) => c.isActive !== false) ?? [];
   // Group channels by category
-  const groupedChannels = channels?.reduce((acc: any, channel: any) => {
+  const groupedChannels = activeChannels.reduce((acc: any, channel: any) => {
     const category = channel.category || 'Other';
     if (!acc[category]) acc[category] = [];
     acc[category].push(channel);
@@ -3559,9 +4364,9 @@ function SchemaRatesModal({ schema, allPGs, onClose }: { schema: any; allPGs: an
       >
         <div className="flex items-start justify-between mb-6">
           <div>
-            <h3 className="text-xl font-bold">Configure Channel Rates</h3>
+            <h3 className="text-xl font-bold">Configure channel rates</h3>
             <p className="text-white/60 text-sm mt-1">
-              {selectedPG ? `${selectedPG.name} • ` : ''}{schema.name} Schema
+              {selectedPG ? `${selectedPG.name} • ` : ''}{schema.name} — set rate per card type (e.g. RATE15: VISA 1.5%, AMEX 4%)
             </p>
           </div>
           <button onClick={onClose} className="text-white/40 hover:text-white">
@@ -3660,12 +4465,21 @@ function SchemaRatesModal({ schema, allPGs, onClose }: { schema: any; allPGs: an
             {channelsLoading ? (
               <div className="text-center py-8 text-white/40">
                 Loading channels...
-                <div className="text-xs mt-2">selectedPG: {selectedPG?.name} (ID: {selectedPG?.id || 'UNDEFINED'})</div>
+              </div>
+            ) : channelsError ? (
+              <div className="text-center py-8">
+                <p className="text-red-400 font-medium">Failed to load channels</p>
+                <p className="text-sm text-white/50 mt-1">{channelsErrorDetail?.message || 'Check backend is running and API URL is correct (e.g. http://localhost:4100/api)'}</p>
+              </div>
+            ) : !activeChannels.some((c: any) => c.transactionType === 'PAYIN') ? (
+              <div className="text-center py-8 text-white/50">
+                <p>No active PAYIN channels for {selectedPG?.name}.</p>
+                <p className="text-sm mt-2">Enable channels in Payment Gateways → Channel bases, or run backend seed for transaction channels.</p>
               </div>
             ) : (
               <div className="space-y-4">
                 {Object.entries(groupedChannels)
-                  .filter(([_, channels]: any) => channels.some((c: any) => c.transactionType === 'PAYIN'))
+                  .filter(([_, chans]: any) => chans.some((c: any) => c.transactionType === 'PAYIN'))
                   .map(([category, categoryChannels]: any) => {
                     const payinChannels = categoryChannels.filter((c: any) => c.transactionType === 'PAYIN');
                     if (payinChannels.length === 0) return null;
@@ -3693,22 +4507,24 @@ function SchemaRatesModal({ schema, allPGs, onClose }: { schema: any; allPGs: an
                                     <span className="text-xs text-white/40 font-mono">{channel.code}</span>
                                   </div>
                                   <p className="text-xs text-white/40 mt-0.5">
-                                    Base Cost: {baseCost}%
+                                    Channel base cost: {baseCost}%
                                   </p>
                                 </div>
 
                                 {isEditing ? (
-                                  <div className="flex items-center gap-2">
-                                    <input
-                                      type="number"
-                                      step="0.01"
-                                      value={channelRateInput}
-                                      onChange={(e) => setChannelRateInput(e.target.value)}
-                                      className="w-24 px-3 py-1.5 bg-white/10 border border-white/20 rounded text-right"
-                                      placeholder="0.00"
-                                      autoFocus
-                                    />
-                                    <span className="text-white/60">%</span>
+                                  <div className="flex items-center gap-2 flex-wrap">
+                                    <div className="flex items-center gap-1">
+                                      <label className="text-xs text-white/50">Schema rate %</label>
+                                      <input
+                                        type="number"
+                                        step="0.01"
+                                        value={channelRateInput}
+                                        onChange={(e) => setChannelRateInput(e.target.value)}
+                                        className="w-20 px-2 py-1.5 bg-white/10 border border-white/20 rounded text-right text-sm"
+                                        placeholder="0.00"
+                                        autoFocus
+                                      />
+                                    </div>
                                     <button
                                       onClick={handleSaveChannelRate}
                                       disabled={setRateMutation.isPending}
@@ -3729,9 +4545,11 @@ function SchemaRatesModal({ schema, allPGs, onClose }: { schema: any; allPGs: an
                                 ) : (
                                   <div className="flex items-center gap-4">
                                     <div className="text-right">
-                                      <p className="text-xs text-white/50">Current Rate</p>
-                                      <p className="font-mono text-lg text-emerald-400">
-                                        {currentRate ? `${currentRate}%` : 'Not Set'}
+                                      <p className="text-xs text-white/50">Base → User rate</p>
+                                      <p className="font-mono text-sm text-emerald-400">
+                                        {currentRate
+                                          ? `${baseCost}% → ${currentRate}%`
+                                          : 'Not Set'}
                                       </p>
                                     </div>
                                     <button
@@ -4076,18 +4894,5 @@ function SchemaRatesModal({ schema, allPGs, onClose }: { schema: any; allPGs: an
     </div>
   );
 }
-
-      {/* Channel Rate Manager Modal */}
-      {showChannelRatesModal && selectedUser && selectedPG && (
-        <ChannelRateManager
-          userId={selectedUser.id}
-          pgId={selectedPG}
-          pgName={userRates.find((r: any) => r.paymentGateway.id === selectedPG)?.paymentGateway.name || ''}
-          onClose={() => {
-            setShowChannelRatesModal(false);
-            refetchUserRates();
-          }}
-        />
-      )}
 
 export default AdminDashboard;

@@ -30,9 +30,10 @@ export const sabPaisaController = {
           return res.send('Transaction already successful');
       }
 
-      // Generate SabPaisa data
+      // Use unique clientTxnId per attempt so Sabpaisa allows retry (avoids "payer already made payment for running process")
+      const attemptId = `${transaction.transactionId}::${Date.now()}`;
       const paymentData = sabPaisaService.createPayment({
-        clientTxnId: transaction.transactionId,
+        clientTxnId: attemptId,
         amount: Number(transaction.amount),
         payerName: `${transaction.initiator.firstName} ${transaction.initiator.lastName}`,
         payerEmail: transaction.initiator.email,
@@ -128,20 +129,26 @@ export const sabPaisaController = {
       // 2. Update transaction status in database
       if (result.clientTxnId) {
         try {
-            // Find transaction by ID
+            // Resolve our transactionId (we send transactionId::timestamp per attempt)
+            const ourTxnId = result.clientTxnId.includes('::')
+              ? result.clientTxnId.split('::')[0]
+              : result.clientTxnId;
             const transaction = await prisma.transaction.findUnique({
-                where: { transactionId: result.clientTxnId }
+                where: { transactionId: ourTxnId }
             });
 
             if (transaction) {
                  logger.info(`Transaction found: ${transaction.id}. Processing status update...`);
                  if (result.success) {
-                    // Update as success using transactionService to handle commissions and wallet credit
+                    // Update as success; pass transactionId so pgTransactionId is stored (Sabpaisa bankTxnId)
+                    const pgRef = result.bankTxnId || result.sabpaisaTxnId;
                     await transactionService.processTransaction(
                         transaction.id,
                         {
                             ...result.rawData,
+                            transactionId: pgRef,
                             sabpaisaTxnId: result.sabpaisaTxnId,
+                            bankTxnId: result.bankTxnId,
                             bankName: result.bankName,
                             paymentMode: result.paymentMode
                         },
@@ -149,11 +156,13 @@ export const sabPaisaController = {
                     );
                     logger.info(`Transaction ${transaction.id} processed successfully.`);
                 } else {
-                    // Update as failed
+                    // Update as failed; still store bankTxnId if present
+                    const pgRef = result.bankTxnId || result.sabpaisaTxnId;
                     await transactionService.processTransaction(
                         transaction.id,
                         {
                             ...result.rawData,
+                            transactionId: pgRef,
                             failureReason: result.message
                         },
                         false

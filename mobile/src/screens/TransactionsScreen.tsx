@@ -121,14 +121,23 @@ export default function TransactionsScreen() {
       return;
     }
 
+    // For PAYIN: customer fields optional; fallback to logged-in user if empty
+    const resolvedName =
+      formData.customerName?.trim() ||
+      [user?.firstName, user?.lastName].filter(Boolean).join(' ').trim() ||
+      user?.email ||
+      'Guest';
+    const resolvedEmail = formData.customerEmail?.trim() || user?.email || '';
+    const resolvedPhone = formData.customerPhone?.trim() || user?.phone || '';
+
     const transactionData = {
       type: transactionType,
       amount: parseFloat(formData.amount),
       pgId: formData.pgId,
       ...(transactionType === 'PAYIN' && {
-        customerName: formData.customerName,
-        customerEmail: formData.customerEmail,
-        customerPhone: formData.customerPhone,
+        customerName: resolvedName,
+        customerEmail: resolvedEmail,
+        customerPhone: resolvedPhone,
       }),
       ...(transactionType === 'PAYOUT' && {
         beneficiaryName: formData.beneficiaryName,
@@ -162,7 +171,12 @@ export default function TransactionsScreen() {
     const status = statusColors[item.status] || statusColors.PENDING;
 
     return (
-      <TouchableOpacity style={styles.transactionItem}>
+      <TouchableOpacity
+        style={styles.transactionItem}
+        onPress={() =>
+          navigation.navigate('TransactionDetail', { transactionId: item.id || item.transactionId })
+        }
+      >
         <View
           style={[
             styles.transactionIcon,
@@ -376,10 +390,10 @@ export default function TransactionsScreen() {
             {transactionType === 'PAYIN' && (
               <>
                 <View style={styles.formGroup}>
-                  <Text style={styles.formLabel}>Customer Name *</Text>
+                  <Text style={styles.formLabel}>Customer Name (optional)</Text>
                   <TextInput
                     style={styles.formInput}
-                    placeholder="John Doe"
+                    placeholder="Uses your name if empty"
                     placeholderTextColor="#71717a"
                     value={formData.customerName}
                     onChangeText={(text) =>
@@ -403,10 +417,10 @@ export default function TransactionsScreen() {
                 </View>
 
                 <View style={styles.formGroup}>
-                  <Text style={styles.formLabel}>Customer Phone</Text>
+                  <Text style={styles.formLabel}>Customer Phone (optional)</Text>
                   <TextInput
                     style={styles.formInput}
-                    placeholder="+91 98765 43210"
+                    placeholder="Uses your phone if empty"
                     placeholderTextColor="#71717a"
                     value={formData.customerPhone}
                     onChangeText={(text) =>

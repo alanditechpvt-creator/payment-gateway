@@ -14,6 +14,8 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useNavigation } from '@react-navigation/native';
+import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { userApi } from '../api';
 import { useAuthStore } from '../store/auth';
 
@@ -29,6 +31,7 @@ interface User {
 }
 
 export default function UsersScreen() {
+  const navigation = useNavigation<NativeStackNavigationProp<any>>();
   const { user: currentUser } = useAuthStore();
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -158,7 +161,10 @@ export default function UsersScreen() {
           <RefreshControl refreshing={isRefetching} onRefresh={refetch} tintColor="#6366f1" />
         }
         renderItem={({ item }: { item: User }) => (
-          <TouchableOpacity style={styles.userCard}>
+          <TouchableOpacity
+            style={styles.userCard}
+            onPress={() => navigation.navigate('UserDetail', { userId: item.id })}
+          >
             <View style={styles.userInfo}>
               <View style={styles.userAvatar}>
                 <Text style={styles.avatarText}>

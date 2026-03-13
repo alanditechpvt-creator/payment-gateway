@@ -1,6 +1,7 @@
 import { Decimal } from '@prisma/client/runtime/library';
 import prisma from '../lib/prisma';
 import { AppError } from '../middleware/errorHandler';
+import { userService } from './user.service';
 
 /**
  * Hierarchical Rate Assignment System
@@ -29,58 +30,88 @@ export const rateService = {
    * Returns the rate they are CHARGED (their cost)
    */
   async getUserRate(userId: string, pgId: string, type: 'PAYIN' | 'PAYOUT' = 'PAYIN', channelId?: string): Promise<number> {
-    // Check if PG is assigned to user
     const pgAssignment = await prisma.userPGAssignment.findUnique({
-      where: {
-        userId_pgId: { userId, pgId },
-      },
+      where: { userId_pgId: { userId, pgId } },
     });
-    
     if (!pgAssignment || !pgAssignment.isEnabled) {
       throw new AppError('Payment gateway not assigned to user', 404);
     }
-    
-    // If specific channel requested, check for user-level override
+
     if (channelId && type === 'PAYIN') {
       const userRate = await prisma.userPayinRate.findUnique({
-        where: {
-          userId_channelId: { userId, channelId },
-        },
+        where: { userId_channelId: { userId, channelId } },
       });
-      
-      if (userRate) {
-        return Number(userRate.payinRate);
+      if (userRate?.isEnabled) return Number(userRate.payinRate);
+
+      const user = await prisma.user.findUnique({
+        where: { id: userId },
+        select: { schemaId: true },
+      });
+      if (user?.schemaId) {
+        const schemaRate = await prisma.schemaPayinRate.findUnique({
+          where: {
+            schemaId_channelId: { schemaId: user.schemaId, channelId },
+          },
+        });
+        if (schemaRate?.isEnabled) return Number(schemaRate.payinRate);
+      }
+      const ch = await prisma.transactionChannel.findUnique({
+        where: { id: channelId },
+        select: { baseCost: true },
+      });
+      return ch ? Number(ch.baseCost ?? 0.02) : 0.02;
+    }
+
+    if (type === 'PAYIN') {
+      const user = await prisma.user.findUnique({
+        where: { id: userId },
+        include: { schema: true },
+      });
+      if (user?.schema?.isActive && user.schema.payinRate != null) {
+        return Number(user.schema.payinRate);
+      }
+      const channels = await prisma.transactionChannel.findMany({
+        where: { pgId, transactionType: 'PAYIN', isActive: true },
+        select: { baseCost: true },
+      });
+      if (channels.length > 0) {
+        return Math.min(...channels.map(c => Number(c.baseCost)));
       }
     }
-    
-    // Fall back to PG base rate
-    const pg = await prisma.paymentGateway.findUnique({
-      where: { id: pgId },
-    });
-    
-    return Number(pg?.baseRate || 0.02);
+    return 0.02;
   },
   
   /**
-   * Get all rates assigned to a user (for all PGs)
+   * Get all rates assigned to a user (for all PGs).
+   * Payin rate = user's schema rate (one per schema) when they have a schema; else PG base.
    */
   async getUserRates(userId: string) {
-    const pgAssignments = await prisma.userPGAssignment.findMany({
-      where: { userId, isEnabled: true },
-      include: {
+    const [pgAssignments, user] = await Promise.all([
+      prisma.userPGAssignment.findMany({
+        where: { userId, isEnabled: true },
+        include: {
         paymentGateway: {
-          select: { id: true, name: true, code: true, baseRate: true, isActive: true, supportedTypes: true },
+          select: { id: true, name: true, code: true, isActive: true, supportedTypes: true },
         },
-      },
-    });
+        },
+      }),
+      prisma.user.findUnique({
+        where: { id: userId },
+        include: { schema: true },
+      }),
+    ]);
     
-    // Map to format with baseRate
+    const schemaPayin = user?.schema?.isActive && user.schema.payinRate != null
+      ? Number(user.schema.payinRate)
+      : null;
+    
+    const defaultRate = 0.02;
     const rates = pgAssignments.map(assignment => ({
       id: assignment.id,
       userId: assignment.userId,
       pgId: assignment.pgId,
-      payinRate: Number(assignment.paymentGateway.baseRate),
-      payoutRate: Number(assignment.paymentGateway.baseRate),
+      payinRate: schemaPayin ?? defaultRate,
+      payoutRate: defaultRate,
       isEnabled: assignment.isEnabled,
       createdAt: assignment.createdAt,
       updatedAt: assignment.updatedAt,
@@ -91,9 +122,29 @@ export const rateService = {
   },
   
   /**
-   * Get the base rate visible to a user (what they pay for PG)
-   * - For Admin: PG's actual base rate
-   * - For others: Their assigned rate (from parent)
+   * Get PG assignments (rates) for a specific user. Used by admin to view any user's assigned PGs,
+   * or by parent to view a direct child's assignments.
+   * Authorize: ADMIN can view any user; others only their direct child.
+   */
+  async getRatesForUser(requesterId: string, targetUserId: string) {
+    const [requester, target] = await Promise.all([
+      prisma.user.findUnique({ where: { id: requesterId } }),
+      prisma.user.findUnique({ where: { id: targetUserId } }),
+    ]);
+    if (!requester || !target) {
+      throw new AppError('User not found', 404);
+    }
+    const isAdmin = requester.role === 'ADMIN' || requester.role === 'SUPER_ADMIN';
+    const isDirectChild = target.parentId === requesterId;
+    if (!isAdmin && !isDirectChild) {
+      throw new AppError('You can only view rates for your direct children or as admin', 403);
+    }
+    return this.getUserRates(targetUserId);
+  },
+
+  /**
+   * Get the minimum rate visible to a user for a PG.
+   * Base rate is per channel (channel.baseCost); here we return the minimum channel base for reference.
    */
   async getBaseRateForUser(userId: string, pgId: string): Promise<{ payinRate: number; payoutRate: number }> {
     const user = await prisma.user.findUnique({
@@ -104,35 +155,27 @@ export const rateService = {
       throw new AppError('User not found', 404);
     }
     
-    // Admin sees actual PG base rate
-    if (user.role === 'ADMIN') {
-      const pg = await prisma.paymentGateway.findUnique({
-        where: { id: pgId },
-      });
-      return {
-        payinRate: Number(pg?.baseRate || 0.02),
-        payoutRate: Number(pg?.baseRate || 0.02),
-      };
+    const defaultRate = 0.02;
+    const channels = await prisma.transactionChannel.findMany({
+      where: { pgId, transactionType: 'PAYIN', isActive: true },
+      select: { baseCost: true },
+    });
+    const minBase = channels.length > 0
+      ? Math.min(...channels.map(c => Number(c.baseCost)))
+      : defaultRate;
+    
+    if (user.role === 'ADMIN' || user.role === 'SUPER_ADMIN') {
+      return { payinRate: minBase, payoutRate: minBase };
     }
     
-    // Others see their assigned rate (check PG assignment)
     const pgAssignment = await prisma.userPGAssignment.findUnique({
-      where: {
-        userId_pgId: { userId, pgId },
-      },
-      include: {
-        paymentGateway: true,
-      },
+      where: { userId_pgId: { userId, pgId } },
     });
     
-    if (pgAssignment && pgAssignment.isEnabled) {
-      return {
-        payinRate: Number(pgAssignment.paymentGateway.baseRate),
-        payoutRate: Number(pgAssignment.paymentGateway.baseRate),
-      };
+    if (pgAssignment?.isEnabled) {
+      return { payinRate: minBase, payoutRate: minBase };
     }
     
-    // No rate assigned - return 0 (user cannot use this PG)
     return { payinRate: 0, payoutRate: 0 };
   },
   
@@ -146,8 +189,8 @@ export const rateService = {
     assignerId: string,
     targetUserId: string,
     pgId: string,
-    payinRate: number,
-    payoutRate: number = 0 // Payout rate is ignored for non-admins
+    payinRate?: number,
+    payoutRate?: number
   ) {
     // Validate assigner
     const assigner = await prisma.user.findUnique({
@@ -162,10 +205,10 @@ export const rateService = {
     }
     
     // Check if assigner can assign rates
-    // permissions is an array, get the first element
     const assignerPermissions = Array.isArray(assigner.permissions) ? assigner.permissions[0] : assigner.permissions;
-    const canAssign = assigner.role === 'ADMIN' || 
-                      assigner.role === 'WHITE_LABEL' || 
+    const canAssign = assigner.role === 'ADMIN' ||
+                      assigner.role === 'SUPER_ADMIN' ||
+                      assigner.role === 'WHITE_LABEL' ||
                       assigner.role === 'MASTER_DISTRIBUTOR' ||
                       assignerPermissions?.canAssignRates;
     
@@ -173,7 +216,6 @@ export const rateService = {
       throw new AppError('You do not have permission to assign rates', 403);
     }
     
-    // Validate target user exists and is a child of assigner
     const targetUser = await prisma.user.findUnique({
       where: { id: targetUserId },
     });
@@ -182,38 +224,10 @@ export const rateService = {
       throw new AppError('Target user not found', 404);
     }
     
-    // Check hierarchy - target must be direct child or Admin can assign to anyone
-    if (assigner.role !== 'ADMIN' && targetUser.parentId !== assignerId) {
+    if (assigner.role !== 'ADMIN' && assigner.role !== 'SUPER_ADMIN' && targetUser.parentId !== assignerId) {
       throw new AppError('You can only assign rates to your direct children', 403);
     }
     
-    // Get assigner's rate for this PG (their cost)
-    const assignerBaseRate = await this.getBaseRateForUser(assignerId, pgId);
-    
-    // Validate PAYIN rate - must be >= assigner's rate
-    if (payinRate < assignerBaseRate.payinRate) {
-      throw new AppError(
-        `Payin rate (${(payinRate * 100).toFixed(2)}%) cannot be lower than your base rate (${(assignerBaseRate.payinRate * 100).toFixed(2)}%)`,
-        400
-      );
-    }
-    
-    // PAYOUT rates are managed at Schema level by Admin only
-    // Non-admin users cannot set payout rates - they are determined by schema slabs
-    let finalPayoutRate = 0;
-    if (assigner.role === 'ADMIN') {
-      // Admin can set payout rate (percentage based) if needed
-      if (payoutRate < assignerBaseRate.payoutRate) {
-        throw new AppError(
-          `Payout rate (${(payoutRate * 100).toFixed(2)}%) cannot be lower than your base rate (${(assignerBaseRate.payoutRate * 100).toFixed(2)}%)`,
-          400
-        );
-      }
-      finalPayoutRate = payoutRate;
-    }
-    // For non-admin, payoutRate stays at 0 - actual payout charges come from schema slabs
-    
-    // Validate PG exists and is active
     const pg = await prisma.paymentGateway.findUnique({
       where: { id: pgId },
     });
@@ -222,14 +236,67 @@ export const rateService = {
       throw new AppError('Payment gateway not available', 400);
     }
     
-    // Create or update PG assignment
+    // "Assign PG only" without rates when: Admin/SuperAdmin, or target user has a schema (rates from schema)
+    const noPayinProvided = payinRate == null || payinRate === undefined;
+    const noPayoutProvided = payoutRate == null || payoutRate === undefined;
+    const noRatesProvided = noPayinProvided && (assigner.role === 'ADMIN' || assigner.role === 'SUPER_ADMIN' ? noPayoutProvided : true);
+    const schemaOnly = noRatesProvided && (assigner.role === 'ADMIN' || assigner.role === 'SUPER_ADMIN' || !!targetUser.schemaId);
+    
+    if (schemaOnly) {
+      const pgAssignment = await prisma.userPGAssignment.upsert({
+        where: {
+          userId_pgId: { userId: targetUserId, pgId },
+        },
+        update: { isEnabled: true },
+        create: {
+          userId: targetUserId,
+          pgId,
+          isEnabled: true,
+        },
+      });
+      return {
+        id: pgAssignment.id,
+        userId: targetUserId,
+        pgId,
+        payinRate: null,
+        payoutRate: null,
+        assignedById: assignerId,
+        isEnabled: true,
+        createdAt: pgAssignment.createdAt,
+        updatedAt: pgAssignment.updatedAt,
+        paymentGateway: pg,
+        assignedBy: assigner,
+        user: targetUser,
+      };
+    }
+    
+    const payin = Number(payinRate) || 0;
+    const assignerBaseRate = await this.getBaseRateForUser(assignerId, pgId);
+    
+    if (payin < assignerBaseRate.payinRate) {
+      throw new AppError(
+        `Payin rate (${(payin * 100).toFixed(2)}%) cannot be lower than your base rate (${(assignerBaseRate.payinRate * 100).toFixed(2)}%)`,
+        400
+      );
+    }
+    
+    let finalPayoutRate = 0;
+    if (assigner.role === 'ADMIN' || assigner.role === 'SUPER_ADMIN') {
+      const payout = Number(payoutRate) ?? 0;
+      if (payout < assignerBaseRate.payoutRate) {
+        throw new AppError(
+          `Payout rate (${(payout * 100).toFixed(2)}%) cannot be lower than your base rate (${(assignerBaseRate.payoutRate * 100).toFixed(2)}%)`,
+          400
+        );
+      }
+      finalPayoutRate = payout;
+    }
+    
     const pgAssignment = await prisma.userPGAssignment.upsert({
       where: {
         userId_pgId: { userId: targetUserId, pgId },
       },
-      update: {
-        isEnabled: true,
-      },
+      update: { isEnabled: true },
       create: {
         userId: targetUserId,
         pgId,
@@ -237,13 +304,10 @@ export const rateService = {
       },
     });
     
-    // Create UserPayinRate for each channel with the specified rate
-    // Get all PAYIN channels for this PG
     const channels = await prisma.transactionChannel.findMany({
       where: { pgId, transactionType: 'PAYIN' },
     });
     
-    // Create/update UserPayinRate for each channel
     for (const channel of channels) {
       await prisma.userPayinRate.upsert({
         where: {
@@ -252,24 +316,22 @@ export const rateService = {
         create: {
           userId: targetUserId,
           channelId: channel.id,
-          payinRate,
+          payinRate: payin,
           assignedById: assignerId,
         },
         update: {
-          payinRate,
+          payinRate: payin,
           assignedById: assignerId,
           updatedAt: new Date(),
         },
       });
     }
 
-    // For now, return a compatible response structure
-    // TODO: Migrate to channel-based rate assignment
-    const rate = {
+    return {
       id: pgAssignment.id,
       userId: targetUserId,
       pgId,
-      payinRate,
+      payinRate: payin,
       payoutRate: finalPayoutRate,
       assignedById: assignerId,
       isEnabled: true,
@@ -279,8 +341,6 @@ export const rateService = {
       assignedBy: assigner,
       user: targetUser,
     };
-    
-    return rate;
     
     /* OLD CODE - Kept for reference
     const oldRate = await prisma.userPGRate.upsert({
@@ -331,7 +391,19 @@ export const rateService = {
   },
   
   /**
+   * Get effective payin rate for a user for a PG (for display; does not throw)
+   */
+  async getEffectivePayinRateForUser(userId: string, pgId: string): Promise<number> {
+    try {
+      return await this.getUserRate(userId, pgId, 'PAYIN');
+    } catch {
+      return 0.02;
+    }
+  },
+
+  /**
    * Get rates assigned to children of a user (for display in rate management)
+   * Returns actual payin/payout rates from UserPayinRate or schema, not default only.
    */
   async getChildrenRates(userId: string, pgId?: string) {
     const user = await prisma.user.findUnique({
@@ -356,7 +428,9 @@ export const rateService = {
       },
     });
     
-    // Get rates for each child
+    const defaultRate = 0.02;
+    
+    // Get rates for each child with actual assigned payin rate
     const childrenWithRates = await Promise.all(
       children.map(async (child) => {
         const where: any = { userId: child.id, isEnabled: true };
@@ -366,23 +440,29 @@ export const rateService = {
           where,
           include: {
             paymentGateway: {
-              select: { id: true, name: true, code: true, isActive: true, supportedTypes: true, baseRate: true },
+              select: { id: true, name: true, code: true, isActive: true, supportedTypes: true },
             },
           },
         });
         
-        // Map to old rate format for compatibility
-        const rates = pgAssignments.map(assignment => ({
-          id: assignment.id,
-          userId: assignment.userId,
-          pgId: assignment.pgId,
-          payinRate: assignment.paymentGateway.baseRate,
-          payoutRate: assignment.paymentGateway.baseRate,
-          isEnabled: assignment.isEnabled,
-          createdAt: assignment.createdAt,
-          updatedAt: assignment.updatedAt,
-          paymentGateway: assignment.paymentGateway,
-        }));
+        const rates = await Promise.all(
+          pgAssignments.map(async (assignment) => {
+            const payinRate = await this.getEffectivePayinRateForUser(child.id, assignment.pgId);
+            // Payout is typically schema-level; no per-user payout in hierarchy for non-admin
+            const payoutRate = defaultRate;
+            return {
+              id: assignment.id,
+              userId: assignment.userId,
+              pgId: assignment.pgId,
+              payinRate,
+              payoutRate,
+              isEnabled: assignment.isEnabled,
+              createdAt: assignment.createdAt,
+              updatedAt: assignment.updatedAt,
+              paymentGateway: assignment.paymentGateway,
+            };
+          })
+        );
         
         return {
           ...child,
@@ -500,23 +580,7 @@ export const rateService = {
     }> = [];
     
     // Get PG base rate (or Card Type base rate)
-    let pgBaseRate = 0.02;
-
-    if (cardTypeId) {
-       const cardType = await prisma.cardType.findUnique({ where: { id: cardTypeId } });
-       if (cardType) {
-         pgBaseRate = cardType.baseRate;
-       } else {
-         const pg = await prisma.paymentGateway.findUnique({ where: { id: pgId } });
-         if (pg) pgBaseRate = pg.baseRate;
-       }
-    } else {
-       const pg = await prisma.paymentGateway.findUnique({ where: { id: pgId } });
-       if (!pg) {
-         throw new AppError('Payment gateway not found', 404);
-       }
-       pgBaseRate = pg.baseRate;
-    }
+    const pgBaseRate = 0.02; // Base is per channel (channel.baseCost); use default when no channel
     
     // Get initiator's rate (what they are charged)
     let initiatorRate: number;
@@ -670,27 +734,22 @@ export const rateService = {
 
     const userRateMap = new Map(userRates.map(r => [r.channelId, r]));
 
-    // Get schema rates for reference
-    const schemaRates = await prisma.schemaPayinRate.findMany({
-      where: {
-        schemaId: user.schemaId!,
-        channelId: { in: channels.map(c => c.id) },
-      },
-    });
-
+    // Per-channel schema rates (SchemaPayinRate); base = channel.baseCost
+    const schemaRates = user.schemaId
+      ? await prisma.schemaPayinRate.findMany({
+          where: {
+            schemaId: user.schemaId,
+            channelId: { in: channels.map(c => c.id) },
+          },
+        })
+      : [];
     const schemaRateMap = new Map(schemaRates.map(r => [r.channelId, r]));
 
-    // Get PG base rate
-    const pg = await prisma.paymentGateway.findUnique({
-      where: { id: pgId },
-      select: { baseRate: true },
-    });
-
-    // Build response
     return channels.map(channel => {
       const userRate = userRateMap.get(channel.id);
-      const schemaRate = schemaRateMap.get(channel.id);
-      
+      const schemaRow = schemaRateMap.get(channel.id);
+      const channelBase = Number(channel.baseCost ?? 0.02);
+      const schemaRateNum = schemaRow ? Number(schemaRow.payinRate) : channelBase;
       return {
         channelId: channel.id,
         channelName: channel.name,
@@ -698,9 +757,9 @@ export const rateService = {
         category: channel.category,
         cardNetwork: channel.cardNetwork,
         cardType: channel.cardType,
-        currentRate: userRate ? Number(userRate.payinRate) : (schemaRate ? Number(schemaRate.payinRate) : Number(pg?.baseRate || 0)),
-        schemaRate: schemaRate ? Number(schemaRate.payinRate) : Number(pg?.baseRate || 0),
-        minRate: schemaRate ? Number(schemaRate.payinRate) : Number(pg?.baseRate || 0),
+        currentRate: userRate ? Number(userRate.payinRate) : schemaRateNum,
+        schemaRate: schemaRateNum,
+        minRate: channelBase,
         isCustomRate: !!userRate,
         assignedById: userRate?.assignedById,
       };
@@ -729,22 +788,20 @@ export const rateService = {
       throw new AppError('Channel not found', 404);
     }
 
-    // Get user and schema rate
     const user = await prisma.user.findUnique({
       where: { id: targetUserId },
-      select: { schemaId: true },
+      include: { schema: true },
     });
 
-    const schemaRate = await prisma.schemaPayinRate.findUnique({
-      where: {
-        schemaId_channelId: {
-          schemaId: user?.schemaId!,
-          channelId,
-        },
-      },
-    });
-
-    const minRate = schemaRate ? Number(schemaRate.payinRate) : Number(channel.paymentGateway.baseRate);
+    const channelBase = Number(channel.baseCost ?? 0.02);
+    const schemaRow = user?.schemaId
+      ? await prisma.schemaPayinRate.findUnique({
+          where: {
+            schemaId_channelId: { schemaId: user.schemaId, channelId },
+          },
+        })
+      : null;
+    const minRate = schemaRow ? Number(schemaRow.payinRate) : channelBase;
 
     // Validate rate is not below minimum
     if (payinRate < minRate) {
@@ -814,5 +871,84 @@ export const rateService = {
     }
 
     return { results, errors };
+  },
+
+  /**
+   * Get commission earned by user (for rate management dashboard)
+   * Supports day-wise, month-wise aggregation and "from downline" breakdown
+   */
+  async getCommissionStats(
+    userId: string,
+    params: { startDate?: Date; endDate?: Date; groupBy?: 'day' | 'month' }
+  ) {
+    const where: any = { userId };
+    if (params.startDate || params.endDate) {
+      where.createdAt = {};
+      if (params.startDate) where.createdAt.gte = params.startDate;
+      if (params.endDate) where.createdAt.lte = params.endDate;
+    }
+
+    const commissions = await prisma.commissionTransaction.findMany({
+      where,
+      include: {
+        transaction: {
+          select: { initiatorId: true, createdAt: true },
+        },
+      },
+      orderBy: { createdAt: 'asc' },
+    });
+
+    const childIds = await userService.getAllChildIds(userId);
+    const childIdSet = new Set(childIds);
+
+    let totalEarned = 0;
+    let fromDownline = 0;
+    const byPeriod: Record<string, number> = {};
+    const byChild: Record<string, number> = {};
+
+    for (const c of commissions) {
+      const amount = Number(c.amount);
+      totalEarned += amount;
+      const initiatorId = c.transaction?.initiatorId;
+      if (initiatorId && childIdSet.has(initiatorId)) {
+        fromDownline += amount;
+        byChild[initiatorId] = (byChild[initiatorId] || 0) + amount;
+      }
+      const d = new Date(c.createdAt);
+      const key = params.groupBy === 'month'
+        ? `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+        : `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+      byPeriod[key] = (byPeriod[key] || 0) + amount;
+    }
+
+    const periodList = Object.entries(byPeriod)
+      .map(([label, amount]) => ({ label, amount }))
+      .sort((a, b) => a.label.localeCompare(b.label));
+
+    // Resolve child names for byChild breakdown
+    const byChildList: Array<{ userId: string; userName: string; email: string; amount: number }> = [];
+    if (Object.keys(byChild).length > 0) {
+      const users = await prisma.user.findMany({
+        where: { id: { in: Object.keys(byChild) } },
+        select: { id: true, email: true, firstName: true, lastName: true },
+      });
+      for (const u of users) {
+        const amount = byChild[u.id] || 0;
+        byChildList.push({
+          userId: u.id,
+          userName: [u.firstName, u.lastName].filter(Boolean).join(' ') || u.email,
+          email: u.email,
+          amount,
+        });
+      }
+      byChildList.sort((a, b) => b.amount - a.amount);
+    }
+
+    return {
+      totalEarned,
+      fromDownline,
+      byPeriod: periodList,
+      byChild: byChildList,
+    };
   },
 };

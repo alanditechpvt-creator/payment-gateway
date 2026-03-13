@@ -163,9 +163,8 @@ export const authService = {
       { expiresIn: config.jwt.refreshExpiresIn }
     );
     
-    // Store refresh token
-    const expiresAt = new Date();
-    expiresAt.setDate(expiresAt.getDate() + 7);
+    // Store refresh token with database expiry aligned to configured refresh lifetime
+    const expiresAt = new Date(Date.now() + this.getRefreshTokenTTLms());
     
     await prisma.refreshToken.create({
       data: {
@@ -176,6 +175,33 @@ export const authService = {
     });
     
     return { accessToken, refreshToken };
+  },
+
+  /**
+   * Convert config.jwt.refreshExpiresIn (e.g. "30m", "24h", "7d") to milliseconds.
+   * Defaults to 30 minutes if parsing fails.
+   */
+  getRefreshTokenTTLms(): number {
+    const raw = config.jwt.refreshExpiresIn || '30m';
+    const match = /^(\d+)([smhd])$/i.exec(raw.trim());
+    if (!match) {
+      // Fallback: 30 minutes
+      return 30 * 60 * 1000;
+    }
+    const value = parseInt(match[1], 10);
+    const unit = match[2].toLowerCase();
+    switch (unit) {
+      case 's':
+        return value * 1000;
+      case 'm':
+        return value * 60 * 1000;
+      case 'h':
+        return value * 60 * 60 * 1000;
+      case 'd':
+        return value * 24 * 60 * 60 * 1000;
+      default:
+        return 30 * 60 * 1000;
+    }
   },
   
   async refreshToken(refreshToken: string) {

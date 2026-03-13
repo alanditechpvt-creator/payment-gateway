@@ -1,6 +1,7 @@
 import { Response, NextFunction } from 'express';
 import { AuthRequest } from '../middleware/auth';
 import { rateService } from '../services/rate.service';
+import { channelRateService } from '../services/channelRate.service';
 
 export const rateController = {
   /**
@@ -10,6 +11,36 @@ export const rateController = {
     try {
       const rates = await rateService.getUserRates(req.user!.userId);
       res.json({ success: true, data: rates });
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  /**
+   * Get current user's payin rates by PG and channel (for schema-based rate display and (i) modal)
+   */
+  async getMyPayinRates(req: AuthRequest, res: Response, next: NextFunction) {
+    try {
+      const ratesByPG = await channelRateService.getUserPayinRates(req.user!.userId);
+      const out: Record<string, { paymentGateway?: { code: string }; rates: { channelName: string; channelCode: string; rate: number; rateDisplay: string; schemaRate: number; schemaRateDisplay: string }[] }> = {};
+      for (const [pgCode, channels] of Object.entries(ratesByPG)) {
+        out[pgCode] = {
+          paymentGateway: { code: pgCode },
+          rates: (channels as any[]).map((c: any) => {
+            // Always use schema rate for (i) modal display (never effective/override rate)
+            const schemaRate = c.schemaRate != null ? Number(c.schemaRate) : Number(c.rate);
+            return {
+              channelName: c.channelName,
+              channelCode: c.channelCode,
+              rate: c.rate,
+              rateDisplay: `${(Number(c.rate) * 100).toFixed(2)}%`,
+              schemaRate,
+              schemaRateDisplay: `${(schemaRate * 100).toFixed(2)}%`,
+            };
+          }),
+        };
+      }
+      res.json({ success: true, data: { ratesByPG: out } });
     } catch (error) {
       next(error);
     }
@@ -55,6 +86,20 @@ export const rateController = {
       next(error);
     }
   },
+
+  /**
+   * Get PG assignments for a specific user (admin: any user; others: direct child only).
+   * Use this in admin Manage Rates popup so assigned PGs show for any user.
+   */
+  async getRatesForUser(req: AuthRequest, res: Response, next: NextFunction) {
+    try {
+      const { userId } = req.params;
+      const rates = await rateService.getRatesForUser(req.user!.userId, userId);
+      res.json({ success: true, data: rates });
+    } catch (error) {
+      next(error);
+    }
+  },
   
   /**
    * Assign rate to a child user
@@ -70,12 +115,15 @@ export const rateController = {
         });
       }
       
+      const payin = payinRate != null && payinRate !== '' ? parseFloat(payinRate) : undefined;
+      const payout = payoutRate != null && payoutRate !== '' ? parseFloat(payoutRate) : undefined;
+      
       const rate = await rateService.assignRate(
         req.user!.userId,
         targetUserId,
         pgId,
-        parseFloat(payinRate) || 0,
-        parseFloat(payoutRate) || 0
+        payin,
+        payout
       );
       
       res.json({ success: true, data: rate });
@@ -186,6 +234,25 @@ export const rateController = {
       );
       
       res.json({ success: true, data: rates });
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  /**
+   * Get commission stats (earned by current user, day/month, from downline)
+   */
+  async getCommissionStats(req: AuthRequest, res: Response, next: NextFunction) {
+    try {
+      const startDate = req.query.startDate ? new Date(req.query.startDate as string) : undefined;
+      const endDate = req.query.endDate ? new Date(req.query.endDate as string) : undefined;
+      const groupBy = (req.query.groupBy as 'day' | 'month') || 'day';
+      const stats = await rateService.getCommissionStats(req.user!.userId, {
+        startDate,
+        endDate,
+        groupBy,
+      });
+      res.json({ success: true, data: stats });
     } catch (error) {
       next(error);
     }

@@ -57,9 +57,9 @@ UPLOAD_PATH="./uploads"
 # PAYMENT GATEWAYS - Add your credentials
 # ================================================================================
 
-# Razorpay
-RAZORPAY_ENABLED=false
-RAZORPAY_KEY_ID="your-razorpay-key-id"
+# Razorpay (all three required for payin: ENABLED=true, KEY_ID, KEY_SECRET)
+RAZORPAY_ENABLED=true
+RAZORPAY_KEY_ID="rzp_test_xxxx"
 RAZORPAY_KEY_SECRET="your-razorpay-key-secret"
 RAZORPAY_WEBHOOK_SECRET="your-razorpay-webhook-secret"
 
@@ -79,6 +79,12 @@ SABPAISA_PASSWORD="your-password"
 SABPAISA_AUTH_KEY="your-auth-key"
 SABPAISA_AUTH_IV="your-auth-iv"
 SABPAISA_CALLBACK_URL="https://yourdomain.com/api/sabpaisa/callback"
+
+# PayU (for admin transaction status refresh - verify_payment API)
+PAYU_ENABLED=false
+PAYU_KEY="your-merchant-key"
+PAYU_SALT="your-merchant-salt"
+PAYU_PRODUCTION=false
 
 # RunPaisa
 RUNPAISA_ENABLED=false

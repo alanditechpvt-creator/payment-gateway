@@ -76,5 +76,8 @@ router.put('/:pgId/base-rate', authorize('ADMIN'), pgController.updateBaseRate);
 // Get channels for a PG
 router.get('/:pgId/channels', pgController.getChannels);
 
+// Sample response structure for channel mapping (Admin; no live API call)
+router.get('/:pgId/sample-response', authorize('ADMIN'), pgController.getSampleResponse);
+
 export default router;
 

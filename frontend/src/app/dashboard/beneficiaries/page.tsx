@@ -16,7 +16,11 @@ import {
   UserIcon,
   ExclamationCircleIcon,
   ArrowPathIcon,
+  ChevronLeftIcon,
+  ChevronRightIcon,
 } from '@heroicons/react/24/outline';
+
+const BENEFICIARIES_PAGE_SIZE = 10;
 
 // Validation helpers
 const validateEmail = (email: string): boolean => {
@@ -45,6 +49,8 @@ const validateAccountNumber = (accountNumber: string): boolean => {
 export default function BeneficiariesPage() {
   const queryClient = useQueryClient();
   const [search, setSearch] = useState('');
+  const [searchDebounced, setSearchDebounced] = useState('');
+  const [page, setPage] = useState(1);
   const [showAddModal, setShowAddModal] = useState(false);
   const [editingBeneficiary, setEditingBeneficiary] = useState<any>(null);
   const [formData, setFormData] = useState({
@@ -61,12 +67,30 @@ export default function BeneficiariesPage() {
   const [isLookingUpIfsc, setIsLookingUpIfsc] = useState(false);
   const [ifscDetails, setIfscDetails] = useState<any>(null);
 
+  // Debounce search so API is not hit on every keystroke
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setSearchDebounced(search);
+      setPage(1);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [search]);
+
   const { data, isLoading, refetch } = useQuery({
-    queryKey: ['beneficiaries', search],
-    queryFn: () => beneficiaryApi.getBeneficiaries({ search: search || undefined }),
+    queryKey: ['beneficiaries', searchDebounced, page],
+    queryFn: () => beneficiaryApi.getBeneficiaries({
+      search: searchDebounced || undefined,
+      page,
+      limit: BENEFICIARIES_PAGE_SIZE,
+    }),
   });
 
-  const beneficiaries = data?.data?.data || [];
+  const res = data?.data;
+  const beneficiaries = Array.isArray(res?.data) ? res.data : [];
+  const total = typeof res?.total === 'number' ? res.total : 0;
+  const totalPages = Math.max(1, Math.ceil(total / BENEFICIARIES_PAGE_SIZE));
+  const from = total === 0 ? 0 : (page - 1) * BENEFICIARIES_PAGE_SIZE + 1;
+  const to = Math.min(page * BENEFICIARIES_PAGE_SIZE, total);
 
   const createMutation = useMutation({
     mutationFn: (data: any) => beneficiaryApi.createBeneficiary(data),
@@ -252,14 +276,14 @@ export default function BeneficiariesPage() {
         </button>
       </div>
 
-      {/* Search */}
+      {/* Search — debounced; resets to page 1 when typing */}
       <div className="relative">
         <MagnifyingGlassIcon className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-white/40" />
         <input
           type="text"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          placeholder="Search by name, account number, or bank..."
+          placeholder="Search by name, nick name, account, IFSC, or bank..."
           className="w-full pl-12 pr-4 py-3 bg-white/5 border border-white/10 rounded-xl text-white placeholder-white/30 focus:outline-none focus:ring-2 focus:ring-violet-500/50"
         />
       </div>
@@ -282,81 +306,115 @@ export default function BeneficiariesPage() {
           </button>
         </div>
       ) : (
-        <div className="grid gap-4">
-          {beneficiaries.map((benef: any) => (
-            <motion.div
-              key={benef.id}
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              className={`glass rounded-xl p-5 ${!benef.isActive ? 'opacity-60' : ''}`}
-            >
-              <div className="flex items-start justify-between">
-                <div className="flex items-start gap-4">
-                  <div className="w-12 h-12 rounded-xl bg-violet-500/20 flex items-center justify-center">
-                    <UserIcon className="w-6 h-6 text-violet-400" />
-                  </div>
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <h3 className="font-semibold">{benef.name}</h3>
-                      {benef.isVerified && (
-                        <span className="px-2 py-0.5 rounded-lg bg-emerald-500/10 text-emerald-400 text-xs flex items-center gap-1">
-                          <CheckCircleIcon className="w-3 h-3" />
-                          Verified
-                        </span>
-                      )}
-                      {!benef.isActive && (
-                        <span className="px-2 py-0.5 rounded-lg bg-red-500/10 text-red-400 text-xs">
-                          Inactive
-                        </span>
-                      )}
+        <>
+          <div className="grid gap-4">
+            {beneficiaries.map((benef: any) => (
+              <motion.div
+                key={benef.id}
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                className={`glass rounded-xl p-5 ${!benef.isActive ? 'opacity-60' : ''}`}
+              >
+                <div className="flex items-start justify-between">
+                  <div className="flex items-start gap-4">
+                    <div className="w-12 h-12 rounded-xl bg-violet-500/20 flex items-center justify-center">
+                      <UserIcon className="w-6 h-6 text-violet-400" />
                     </div>
-                    {benef.nickName && (
-                      <p className="text-sm text-white/50">{benef.nickName}</p>
-                    )}
-                    <div className="mt-2 flex flex-wrap items-center gap-4 text-sm text-white/60">
-                      <span className="font-mono">A/C: {benef.accountNumber}</span>
-                      <span className="font-mono">{benef.ifscCode}</span>
-                      <span>{benef.bankName}</span>
-                      <span className="capitalize px-2 py-0.5 rounded bg-white/5">{benef.accountType?.toLowerCase()}</span>
-                    </div>
-                    {(benef.email || benef.phone) && (
-                      <div className="mt-2 flex items-center gap-4 text-sm text-white/40">
-                        {benef.email && <span>{benef.email}</span>}
-                        {benef.phone && <span>{benef.phone}</span>}
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <h3 className="font-semibold">{benef.name}</h3>
+                        {benef.isVerified && (
+                          <span className="px-2 py-0.5 rounded-lg bg-emerald-500/10 text-emerald-400 text-xs flex items-center gap-1">
+                            <CheckCircleIcon className="w-3 h-3" />
+                            Verified
+                          </span>
+                        )}
+                        {!benef.isActive && (
+                          <span className="px-2 py-0.5 rounded-lg bg-red-500/10 text-red-400 text-xs">
+                            Inactive
+                          </span>
+                        )}
                       </div>
+                      {benef.nickName && (
+                        <p className="text-sm text-white/50">{benef.nickName}</p>
+                      )}
+                      <div className="mt-2 flex flex-wrap items-center gap-4 text-sm text-white/60">
+                        <span className="font-mono">A/C: {benef.accountNumber}</span>
+                        <span className="font-mono">{benef.ifscCode}</span>
+                        <span>{benef.bankName}</span>
+                        <span className="capitalize px-2 py-0.5 rounded bg-white/5">{benef.accountType?.toLowerCase()}</span>
+                      </div>
+                      {(benef.email || benef.phone) && (
+                        <div className="mt-2 flex items-center gap-4 text-sm text-white/40">
+                          {benef.email && <span>{benef.email}</span>}
+                          {benef.phone && <span>{benef.phone}</span>}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {!benef.isVerified && (
+                      <button
+                        onClick={() => verifyMutation.mutate(benef.id)}
+                        disabled={verifyMutation.isPending}
+                        className="p-2 rounded-lg bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 transition-colors"
+                        title="Verify"
+                      >
+                        <CheckCircleIcon className="w-5 h-5" />
+                      </button>
                     )}
+                    <button
+                      onClick={() => handleEdit(benef)}
+                      className="p-2 rounded-lg bg-white/5 text-white/60 hover:bg-white/10 hover:text-white transition-colors"
+                      title="Edit"
+                    >
+                      <PencilIcon className="w-5 h-5" />
+                    </button>
+                    <button
+                      onClick={() => handleDelete(benef.id)}
+                      className="p-2 rounded-lg bg-red-500/10 text-red-400 hover:bg-red-500/20 transition-colors"
+                      title="Delete"
+                    >
+                      <TrashIcon className="w-5 h-5" />
+                    </button>
                   </div>
                 </div>
-                <div className="flex items-center gap-2">
-                  {!benef.isVerified && (
-                    <button
-                      onClick={() => verifyMutation.mutate(benef.id)}
-                      disabled={verifyMutation.isPending}
-                      className="p-2 rounded-lg bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 transition-colors"
-                      title="Verify"
-                    >
-                      <CheckCircleIcon className="w-5 h-5" />
-                    </button>
-                  )}
-                  <button
-                    onClick={() => handleEdit(benef)}
-                    className="p-2 rounded-lg bg-white/5 text-white/60 hover:bg-white/10 hover:text-white transition-colors"
-                    title="Edit"
-                  >
-                    <PencilIcon className="w-5 h-5" />
-                  </button>
-                  <button
-                    onClick={() => handleDelete(benef.id)}
-                    className="p-2 rounded-lg bg-red-500/10 text-red-400 hover:bg-red-500/20 transition-colors"
-                    title="Delete"
-                  >
-                    <TrashIcon className="w-5 h-5" />
-                  </button>
-                </div>
+              </motion.div>
+            ))}
+          </div>
+
+          {/* Pagination */}
+          {total > 0 && (
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-4 pt-4 border-t border-white/10">
+              <p className="text-sm text-white/50">
+                Showing {from}–{to} of {total}
+              </p>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setPage((p) => Math.max(1, p - 1))}
+                  disabled={page <= 1}
+                  className="p-2 rounded-lg bg-white/5 text-white/70 hover:bg-white/10 disabled:opacity-40 disabled:pointer-events-none transition-colors"
+                  aria-label="Previous page"
+                >
+                  <ChevronLeftIcon className="w-5 h-5" />
+                </button>
+                <span className="text-sm text-white/70 px-2">
+                  Page {page} of {totalPages}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                  disabled={page >= totalPages}
+                  className="p-2 rounded-lg bg-white/5 text-white/70 hover:bg-white/10 disabled:opacity-40 disabled:pointer-events-none transition-colors"
+                  aria-label="Next page"
+                >
+                  <ChevronRightIcon className="w-5 h-5" />
+                </button>
               </div>
-            </motion.div>
-          ))}
-        </div>
+            </div>
+          )}
+        </>
       )}
 
       {/* Add/Edit Modal */}
