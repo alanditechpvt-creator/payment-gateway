@@ -116,7 +116,7 @@ export default function TransactionsPage() {
   const [exporting, setExporting] = useState(false);
   const exportInProgressRef = useRef(false);
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, refetch } = useQuery({
     queryKey: ['transactions', page, typeFilter, statusFilter, pgFilter, search],
     queryFn: () => transactionApi.getTransactions({
       page,
