@@ -1,6 +1,7 @@
-import { Request, Response, NextFunction } from 'express';
+import { Response, NextFunction } from 'express';
 import { bbpsService } from '../services/bbps.service';
 import { AuthRequest } from '../middleware/auth';
+import { config } from '../config';
 
 export const bbpsController = {
   fetchBill: async (req: AuthRequest, res: Response, next: NextFunction) => {
@@ -66,6 +67,27 @@ export const bbpsController = {
       });
       
       res.json({ success: true, data: bills });
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  /** GET /api/bbps/billers – List billers (banks) from DB. Query: category (e.g. CREDIT_CARD). Sync first via POST /api/bbps/billers/sync. */
+  getBillers: async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const category = typeof req.query.category === 'string' ? req.query.category : undefined;
+      const billers = await bbpsService.getBillersFromDb(category);
+      res.json({ success: true, data: billers });
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  /** POST /api/bbps/billers/sync – Fetch billers from Bill Avenue (Biller Info API) and store in DB. Uses BBPS_BILLER_IDS. */
+  syncBillers: async (_req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const result = await bbpsService.syncBillersToDb();
+      res.json({ success: true, ...result, message: `Synced ${result.synced} billers.` });
     } catch (error) {
       next(error);
     }

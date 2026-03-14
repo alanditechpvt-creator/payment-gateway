@@ -184,6 +184,9 @@ export const configApi = {
 };
 
 export const bbpsApi = {
+  getBillers: (params?: { category?: string }) =>
+    api.get('/bbps/billers', { params: params?.category ? { category: params.category } : {} }),
+  syncBillers: () => api.post('/bbps/billers/sync'),
   fetchBill: (data: any) => api.post('/bbps/fetch', data),
   payBill: (data: any) => api.post('/bbps/pay', data),
 };

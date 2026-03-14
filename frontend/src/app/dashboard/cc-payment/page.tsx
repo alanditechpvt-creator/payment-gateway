@@ -19,12 +19,19 @@ export default function CCPaymentPage() {
   const router = useRouter();
   const queryClient = useQueryClient();
   
-  // Form State
+  // Form State: select biller (bank) first, then mobile & card
+  const [selectedBiller, setSelectedBiller] = useState<{ billerId: string; billerName: string } | null>(null);
   const [mobileNumber, setMobileNumber] = useState('');
   const [cardLast4, setCardLast4] = useState('');
   const [billDetails, setBillDetails] = useState<any>(null);
-  const [loading, setLoading] = useState(false);
   const [selectedPG, setSelectedPG] = useState('');
+
+  // Fetch billers (banks: ICICI, Axis, HDFC, SBI, etc.) – from DB, sync first via POST /api/bbps/billers/sync
+  const { data: billersData, refetch: refetchBillers } = useQuery({
+    queryKey: ['bbps-billers', 'CREDIT_CARD'],
+    queryFn: () => bbpsApi.getBillers({ category: 'CREDIT_CARD' }),
+  });
+  const billers = billersData?.data?.data ?? [];
 
   // Fetch PGs
   const { data: pgsData } = useQuery({
@@ -72,16 +79,33 @@ export default function CCPaymentPage() {
 
   const handleFetchBill = (e: React.FormEvent) => {
     e.preventDefault();
+    if (!selectedBiller?.billerId) {
+      toast.error('Please select your bank (biller) first');
+      return;
+    }
     if (mobileNumber.length < 10) {
       toast.error('Please enter a valid mobile number');
       return;
     }
     fetchBillMutation.mutate({
       category: 'CREDIT_CARD',
+      billerId: selectedBiller.billerId,
       mobileNumber,
       cardLast4: cardLast4 || undefined,
     });
   };
+
+  // Sync billers from Bill Avenue (Biller Info API) – uses BBPS_BILLER_IDS; call once to populate list
+  const syncBillersMutation = useMutation({
+    mutationFn: () => bbpsApi.syncBillers(),
+    onSuccess: () => {
+      toast.success('Billers synced. List updated.');
+      refetchBillers();
+    },
+    onError: (err: any) => {
+      toast.error(err.response?.data?.error || err.message || 'Sync failed');
+    },
+  });
 
   const handlePay = () => {
     if (!selectedPG) {
@@ -121,6 +145,45 @@ export default function CCPaymentPage() {
           <form onSubmit={handleFetchBill} className="space-y-4">
             <div>
               <label className="block text-sm font-medium text-white/70 mb-2">
+                Select your bank (biller)
+              </label>
+              <div className="relative">
+                <BuildingLibraryIcon className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-white/40" />
+                <select
+                  value={selectedBiller?.billerId ?? ''}
+                  onChange={(e) => {
+                    const id = e.target.value;
+                    const b = billers.find((x: any) => x.billerId === id);
+                    setSelectedBiller(b ? { billerId: b.billerId, billerName: b.billerName || b.billerAliasName || id } : null);
+                  }}
+                  className="w-full bg-white/5 border border-white/10 rounded-xl py-3 pl-12 pr-4 focus:outline-none focus:border-primary-500 transition-colors appearance-none text-white"
+                  required
+                >
+                  <option value="" className="bg-gray-900 text-white">Select bank (e.g. ICICI, HDFC, SBI, Axis)</option>
+                  {billers.map((b: any) => (
+                    <option key={b.billerId} value={b.billerId} className="bg-gray-900 text-white">
+                      {b.billerName || b.billerAliasName || b.billerId}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              {billers.length === 0 && (
+                <p className="mt-2 text-sm text-white/50">
+                  No billers loaded. Set BBPS_BILLER_IDS in .env and{' '}
+                  <button
+                    type="button"
+                    onClick={() => syncBillersMutation.mutate()}
+                    disabled={syncBillersMutation.isPending}
+                    className="text-primary-400 hover:underline"
+                  >
+                    {syncBillersMutation.isPending ? 'Syncing…' : 'Sync billers'}
+                  </button>
+                </p>
+              )}
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-white/70 mb-2">
                 Registered Mobile Number
               </label>
               <div className="relative">
@@ -155,7 +218,7 @@ export default function CCPaymentPage() {
 
             <button
               type="submit"
-              disabled={fetchBillMutation.isPending}
+              disabled={fetchBillMutation.isPending || !selectedBiller?.billerId}
               className="w-full py-3 bg-primary-500 hover:bg-primary-600 text-white rounded-xl font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
             >
               {fetchBillMutation.isPending ? (

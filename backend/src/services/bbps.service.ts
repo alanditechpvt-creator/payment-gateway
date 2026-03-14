@@ -50,11 +50,24 @@ export const bbpsService = {
     };
   }
 
-  // Bill Avenue requires billerId exactly 14 chars (per BBPS doc)
-  const billerId = (params.billerId || config.bbps.creditCardBillerId || '').trim().slice(0, 14);
+  // Bill Avenue requires billerId exactly 14 chars. Resolve from params, env, or Biller Info API.
+  let billerId = (params.billerId || config.bbps.creditCardBillerId || '').trim().slice(0, 14);
+  if (billerId.length !== 14 && config.bbps.billerIdsToFetch.length > 0) {
+    try {
+      const { billers } = await bbpsService.getBillerList(config.bbps.billerIdsToFetch);
+      const creditCardBiller = billers.find(
+        (b) =>
+          /credit\s*card|loan\s*repayment/i.test(b.billerCategory) ||
+          /credit\s*card|loan/i.test(b.billerName || '')
+      );
+      if (creditCardBiller) billerId = creditCardBiller.billerId;
+    } catch (e) {
+      logger.warn('Could not resolve Credit Card billerId from Biller Info', { message: (e as Error)?.message });
+    }
+  }
   if (billerId.length !== 14) {
     throw new AppError(
-      'BBPS billerId is required and must be 14 characters. Set BBPS_CREDIT_CARD_BILLER_ID in .env or pass billerId in the request.',
+      'BBPS billerId is required (14 characters). Set BBPS_BILLER_IDS or BBPS_CREDIT_CARD_BILLER_ID in .env, or pass billerId in the request. Use GET /api/bbps/billers to fetch biller list.',
       400
     );
   }
@@ -411,6 +424,192 @@ export const bbpsService = {
   },
 
   /**
+   * Biller Info (MDM) API – fetch biller details for given IDs (1–2000).
+   * Use to get list of billers and pick Credit Card billerId. Doc: at least 1 biller ID required.
+   */
+  async getBillerList(billerIds: string[]): Promise<{ billers: Array<{ billerId: string; billerName: string; billerCategory: string; billerAliasName?: string }> }> {
+    if (!config.bbps.enabled) {
+      throw new AppError('BBPS service is disabled', 400);
+    }
+    const ids = billerIds.map((id) => String(id).trim().slice(0, 14)).filter((id) => id.length === 14);
+    if (ids.length === 0) {
+      throw new AppError('At least one valid 14-character billerId is required. Set BBPS_BILLER_IDS in .env or pass billerIds.', 400);
+    }
+    if (ids.length > 2000) {
+      throw new AppError('Maximum 2000 biller IDs allowed per request', 400);
+    }
+    if (!config.bbps.instituteId) {
+      throw new AppError('BBPS instituteId (BBPS_AGENT_INSTITUTION_ID) is not configured', 500);
+    }
+
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<billerInfoRequest>
+${ids.map((id) => `<billerId>${id}</billerId>`).join('\n')}
+</billerInfoRequest>`;
+
+    const encRequest = encryptBBPSRequest(
+      xml,
+      config.bbps.workingKey,
+      config.bbps.iv,
+      config.bbps.ivUseZero
+    );
+    const requestId = generateBBPSRequestId();
+    const params = new URLSearchParams();
+    params.append('accessCode', config.bbps.accessCode);
+    params.append('requestId', requestId);
+    params.append('encRequest', encRequest);
+    params.append('ver', '1.0');
+    params.append('instituteId', config.bbps.instituteId);
+
+    const response = await axios.post(
+      config.bbps.endpoints.billerMdm,
+      params.toString(),
+      { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }
+    );
+
+    const raw = response.data;
+    if (typeof raw === 'string') {
+      const lower = raw.toLowerCase();
+      if (
+        (lower.includes('access denied') || lower.includes('unauthorized access')) &&
+        (lower.includes('<html') || lower.includes('<!doctype'))
+      ) {
+        throw new AppError('BBPS access denied. Check credentials and IP whitelisting.', 403);
+      }
+    }
+
+    let data: Record<string, unknown> | string = response.data;
+    if (typeof data === 'string') {
+      if (
+        (response.headers?.['content-type'] || '').toLowerCase().includes('x-www-form-urlencoded') ||
+        (data.includes('encResponse=') || data.includes('enc_response=') || data.includes('encData='))
+      ) {
+        data = Object.fromEntries(new URLSearchParams(data)) as Record<string, unknown>;
+      } else if (data.trim().startsWith('{')) {
+        try {
+          data = JSON.parse(data) as Record<string, unknown>;
+        } catch {
+          // keep string
+        }
+      }
+    }
+
+    const strData = typeof data === 'string' ? data.trim() : '';
+    const objData = typeof data === 'object' && data && !Array.isArray(data) ? data : null;
+    const encResponse =
+      (objData && (objData.encResponse as string)) ??
+      (objData && (objData.enc_response as string)) ??
+      (objData && (objData.encData as string)) ??
+      (objData && (objData.enc_data as string)) ??
+      (strData && /^[0-9a-fA-F]+$/.test(strData) && strData.length >= 32 && strData.length % 2 === 0 ? strData : null);
+
+    let decrypted: string;
+    if (strData && (strData.startsWith('<?xml') || strData.startsWith('<billerInfoResponse') || (strData.startsWith('<') && strData.includes('billerInfoResponse')))) {
+      decrypted = strData;
+    } else if (encResponse) {
+      try {
+        decrypted = decryptBBPSResponse(
+          encResponse,
+          config.bbps.workingKey,
+          config.bbps.iv,
+          config.bbps.ivUseZero
+        );
+      } catch (e) {
+        logger.error('Biller Info decryption failed', { message: (e as Error)?.message });
+        throw new AppError('Invalid response from BBPS Biller Info', 500);
+      }
+    } else {
+      throw new AppError('Invalid response from BBPS Biller Info', 500);
+    }
+
+    const codeMatch = decrypted.match(/<responseCode>(.*?)<\/responseCode>/i);
+    const code = codeMatch ? codeMatch[1].trim() : '';
+    if (code && code !== '000') {
+      const errMsgMatch = decrypted.match(/<errorMessage>(.*?)<\/errorMessage>/i);
+      throw new AppError(errMsgMatch ? errMsgMatch[1].trim() : `BBPS Biller Info error (code ${code})`, 400);
+    }
+
+    const billers = parseBillerInfoResponse(decrypted);
+    return { billers };
+  },
+
+  /**
+   * Get billers from DB (optionally filter by category e.g. CREDIT_CARD).
+   * Use after sync so users can select bank (ICICI, Axis, HDFC, SBI, etc.).
+   */
+  async getBillersFromDb(category?: string): Promise<Array<{ billerId: string; billerName: string; billerAliasName?: string; billerCategory?: string }>> {
+    const list = await prisma.bbpsBiller.findMany({
+      orderBy: [{ sortOrder: 'asc' }, { billerName: 'asc' }],
+    });
+    if (!category || !category.trim()) {
+      return list.map((x) => ({
+        billerId: x.billerId,
+        billerName: x.billerName,
+        billerAliasName: x.billerAliasName ?? undefined,
+        billerCategory: x.billerCategory ?? undefined,
+      }));
+    }
+    const c = category.trim().toLowerCase();
+    const isCreditCard = c === 'credit_card' || c === 'credit card' || c.includes('credit');
+    const filtered = list.filter((x) => {
+      const cat = (x.billerCategory || '').toLowerCase();
+      const name = (x.billerName || '').toLowerCase();
+      const alias = (x.billerAliasName || '').toLowerCase();
+      if (isCreditCard) return cat.includes('credit') || name.includes('credit') || alias.includes('credit');
+      return cat.includes(c) || name.includes(c) || alias.includes(c);
+    });
+    return filtered.map((x) => ({
+      billerId: x.billerId,
+      billerName: x.billerName,
+      billerAliasName: x.billerAliasName ?? undefined,
+      billerCategory: x.billerCategory ?? undefined,
+    }));
+  },
+
+  /** Sync billers from Bill Avenue into DB (uses BBPS_BILLER_IDS). Top billers: Axis, ICICI, HDFC, SBI. */
+  async syncBillersToDb(): Promise<{ synced: number; billers: Array<{ billerId: string; billerName: string; isTopBiller: boolean }> }> {
+    const ids = config.bbps.billerIdsToFetch;
+    if (ids.length === 0) {
+      throw new AppError('Set BBPS_BILLER_IDS in .env (comma-separated 14-char biller IDs from Bill Avenue) to sync billers.', 400);
+    }
+    const { billers } = await bbpsService.getBillerList(ids);
+    const TOP_BILLER_NAMES = ['axis', 'icici', 'hdfc', 'sbi'];
+    const TOP_ORDER: Record<string, number> = { sbi: 1, hdfc: 2, icici: 3, axis: 4 };
+    let synced = 0;
+    for (const b of billers) {
+      const name = (b.billerName || b.billerAliasName || '').toLowerCase();
+      const isTop = TOP_BILLER_NAMES.some((t) => name.includes(t));
+      const sortOrder = isTop
+        ? (TOP_ORDER[TOP_BILLER_NAMES.find((t) => name.includes(t))!] ?? 50)
+        : 100;
+      await prisma.bbpsBiller.upsert({
+        where: { billerId: b.billerId },
+        create: {
+          billerId: b.billerId,
+          billerName: b.billerName,
+          billerAliasName: b.billerAliasName,
+          billerCategory: b.billerCategory,
+          isTopBiller: isTop,
+          sortOrder,
+        },
+        update: {
+          billerName: b.billerName,
+          billerAliasName: b.billerAliasName,
+          billerCategory: b.billerCategory,
+          isTopBiller: isTop,
+          sortOrder,
+        },
+      });
+      synced++;
+    }
+    const list = await prisma.bbpsBiller.findMany({ orderBy: [{ sortOrder: 'asc' }, { billerName: 'asc' }] });
+    return {
+      synced,
+      billers: list.map((x) => ({ billerId: x.billerId, billerName: x.billerName, isTopBiller: x.isTopBiller })),
+    };
+  },
+
+  /**
    * Get all bills for a user
    */
   async getUserBills(userId: string, filters?: {
@@ -487,7 +686,31 @@ function generateBBPSRequestId(): string {
 }
 
 /**
- * Parse XML response from BillAvenue
+ * Parse Biller Info (MDM) XML response into array of billers
+ */
+function parseBillerInfoResponse(xml: string): Array<{ billerId: string; billerName: string; billerCategory: string; billerAliasName?: string }> {
+  const billers: Array<{ billerId: string; billerName: string; billerCategory: string; billerAliasName?: string }> = [];
+  const billerBlocks = xml.match(/<biller>[\s\S]*?<\/biller>/gi) || [];
+  for (const block of billerBlocks) {
+    const getVal = (tag: string): string => {
+      const re = new RegExp(`<${tag}>([\\s\\S]*?)</${tag}>`, 'i');
+      const m = block.match(re);
+      return m ? m[1].trim() : '';
+    };
+    const billerId = getVal('billerId');
+    if (!billerId) continue;
+    billers.push({
+      billerId,
+      billerName: getVal('billerName') || getVal('billerAliasName') || billerId,
+      billerCategory: getVal('billerCategory') || '',
+      billerAliasName: getVal('billerAliasName') || undefined,
+    });
+  }
+  return billers;
+}
+
+/**
+ * Parse XML response from BillAvenue (bill fetch / bill payment)
  * Simplified parser - consider using xml2js for production
  */
 function parseXMLResponse(xml: string): any {

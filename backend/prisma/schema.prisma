@@ -680,3 +680,19 @@ model CachedBill {
   @@index([status])
   @@index([expiresAt])
 }
+
+// BBPS Billers (banks) – synced from Bill Avenue Biller Info API
+model BbpsBiller {
+  id              String   @id @default(uuid())
+  billerId        String   @unique  // 14-char from Bill Avenue
+  billerName      String
+  billerAliasName String?
+  billerCategory  String?
+  isTopBiller     Boolean  @default(false)  // Axis, ICICI, HDFC, SBI
+  sortOrder       Int      @default(0)      // lower = show first
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([isTopBiller])
+  @@index([billerCategory])
+}
