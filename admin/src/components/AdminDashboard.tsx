@@ -3810,28 +3810,28 @@ function GlobalLedgerTab({ users }: { users: any[] }) {
   const [filterUserId, setFilterUserId] = useState('');
   const exportInProgressRef = useRef(false);
 
-  const handleExportLedger = useCallback(async (format: 'csv' | 'json') => {
+  const handleExportLedger = useCallback(async (exportFormat: 'csv' | 'json') => {
     if (exportInProgressRef.current) return;
     exportInProgressRef.current = true;
     try {
       const response = await ledgerApi.exportGlobalLedger({
-        format,
+        format: exportFormat,
         type: filterType || undefined,
         userId: filterUserId || undefined,
       });
       const blob = response.data instanceof Blob
         ? response.data
-        : new Blob([response.data], { type: format === 'csv' ? 'text/csv' : 'application/json' });
+        : new Blob([response.data], { type: exportFormat === 'csv' ? 'text/csv' : 'application/json' });
       const disposition = response.headers?.['content-disposition'];
       const filenameMatch = disposition?.match(/filename="?([^";\n]+)"?/);
-      const filename = filenameMatch?.[1] || `global-ledger_${format(new Date(), 'yyyy-MM-dd')}.${format}`;
+      const filename = filenameMatch?.[1] || `global-ledger_${format(new Date(), 'yyyy-MM-dd')}.${exportFormat}`;
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
       a.download = filename;
       a.click();
       URL.revokeObjectURL(url);
-      toast.success(`Ledger exported as ${format.toUpperCase()}`);
+      toast.success(`Ledger exported as ${exportFormat.toUpperCase()}`);
     } catch (err: any) {
       toast.error(err?.response?.data?.message || 'Export failed');
     } finally {
