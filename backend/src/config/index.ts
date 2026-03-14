@@ -127,15 +127,19 @@ export const config = {
 
   // Payment Gateway: BBPS (Live API)
   bbps: (() => {
-    const isProduction = process.env.BBPS_ENDPOINT === 'production';
-    const baseUrl = isProduction 
-      ? 'https://api.billavenue.com/billpay' 
-      : 'https://uat.billavenue.com/billpay';
+    const env = (process.env.BBPS_ENDPOINT || 'staging').toLowerCase();
+    const baseUrl = env === 'production'
+      ? 'https://api.billavenue.com/billpay'
+      : env === 'staging'
+        ? 'https://stgapi.billavenue.com/billpay'
+        : 'https://uat.billavenue.com/billpay';
     
     return {
       enabled: process.env.BBPS_ENABLED === 'true',
       accessCode: process.env.BBPS_ACCESS_CODE || '',
       workingKey: process.env.BBPS_WORKING_KEY || '',
+      /** Optional: IV shared separately by Bill Avenue (16 bytes, hex string = 32 chars). If not set, default IV per spec is used. */
+      iv: process.env.BBPS_IV || null,
       agentId: process.env.BBPS_AGENT_ID || '',
       instituteId: process.env.BBPS_AGENT_INSTITUTION_ID || '',
       instituteName: process.env.BBPS_AGENT_INSTITUTION_NAME || '',

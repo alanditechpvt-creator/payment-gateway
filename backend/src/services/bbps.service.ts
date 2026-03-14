@@ -69,23 +69,23 @@ export const bbpsService = {
 
   logger.info('BBPS Bill Fetch Request XML:', xml);
 
-  // Encrypt the XML
-  const encRequest = encryptBBPSRequest(xml, config.bbps.workingKey);
+  // Encrypt the XML (IV from config if Bill Avenue shared separately)
+  const encRequest = encryptBBPSRequest(xml, config.bbps.workingKey, config.bbps.iv);
   
-  logger.info('BBPS Encrypted Request:', {
-    length: encRequest.length,
-    sample: encRequest.substring(0, 100),
-    workingKey: config.bbps.workingKey,
-    accessCode: config.bbps.accessCode,
+  logger.info('BBPS Encrypted Request:', { length: encRequest.length, sample: encRequest.substring(0, 80) + '...' });
+
+  // Confirm config is loaded (do not log secrets)
+  const hasCreds = !!(config.bbps.accessCode && config.bbps.workingKey);
+  logger.info('BBPS request', {
+    endpoint: config.bbps.endpoints.billFetch,
+    credentialsLoaded: hasCreds,
   });
 
-  // Write debug info to file
   const fs = require('fs');
   const debugInfo = {
     timestamp: new Date().toISOString(),
     url: config.bbps.endpoints.billFetch,
-    accessCode: config.bbps.accessCode,
-    workingKey: config.bbps.workingKey,
+    credentialsLoaded: hasCreds,
     xml: xml,
     encRequestLength: encRequest.length,
     encRequestSample: encRequest.substring(0, 200),
@@ -93,12 +93,20 @@ export const bbpsService = {
   };
   fs.writeFileSync('./bbps-debug-request.json', JSON.stringify(debugInfo, null, 2));
 
+  if (!config.bbps.instituteId) {
+    throw new AppError('BBPS instituteId (BBPS_AGENT_INSTITUTION_ID) is not configured', 500);
+  }
+
   try {
-    // BillAvenue format: POST with form data
+    // Bill Avenue required POST params: accessCode, requestId, encRequest, ver, instituteId
+    const requestId = generateBBPSRequestId();
     const params = new URLSearchParams();
     params.append('accessCode', config.bbps.accessCode);
+    params.append('requestId', requestId);
     params.append('encRequest', encRequest);
-    
+    params.append('ver', '1.0');
+    params.append('instituteId', config.bbps.instituteId);
+
     const response = await axios.post(
       config.bbps.endpoints.billFetch,
       params.toString(),
@@ -185,8 +193,8 @@ export const bbpsService = {
       throw new AppError((msg as string) || 'Invalid response from BBPS', 500);
     }
 
-    // Decrypt response
-    const decrypted = decryptBBPSResponse(encResponse, config.bbps.workingKey);
+    // Decrypt response (same IV as encrypt)
+    const decrypted = decryptBBPSResponse(encResponse, config.bbps.workingKey, config.bbps.iv);
     logger.info('Decrypted BBPS Response:', decrypted);
 
     // Parse XML response
@@ -344,19 +352,24 @@ export const bbpsService = {
   }
 };
 
+/**
+ * Bill Avenue requestId: alphanumeric 35 chars.
+ * Format: <random 27 chars>;<YDDDhhmm>
+ * Y = last digit of year, DDD = day of year, hh = 24h hour, mm = minutes.
+ */
 function generateBBPSRequestId(): string {
-  // <random 27 characters><YDDDhhmm>
-  const random = Math.random().toString(36).substring(2, 29).padEnd(27, 'X');
+  const alphanumeric = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz';
+  let random = '';
+  for (let i = 0; i < 27; i++) {
+    random += alphanumeric[Math.floor(Math.random() * alphanumeric.length)];
+  }
   const now = new Date();
-  const year = now.getFullYear();
-  const Y = String(year).slice(-1);
+  const Y = String(now.getFullYear()).slice(-1);
   const start = new Date(now.getFullYear(), 0, 0);
-  const diff = now.getTime() - start.getTime();
-  const oneDay = 1000 * 60 * 60 * 24;
-  const DDD = String(Math.floor(diff / oneDay)).padStart(3, '0');
+  const DDD = String(Math.floor((now.getTime() - start.getTime()) / (1000 * 60 * 60 * 24))).padStart(3, '0');
   const hh = String(now.getHours()).padStart(2, '0');
   const mm = String(now.getMinutes()).padStart(2, '0');
-  return `${random}${Y}${DDD}${hh}${mm}`;
+  return `${random};${Y}${DDD}${hh}${mm}`;
 }
 
 /**
