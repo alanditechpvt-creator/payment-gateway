@@ -109,32 +109,60 @@ export const bbpsService = {
       }
     );
 
+    // Normalize response: API may return string (form-urlencoded or JSON)
+    let data: Record<string, unknown> | string = response.data;
+    if (typeof data === 'string') {
+      const contentType = (response.headers?.['content-type'] || '').toLowerCase();
+      if (
+        contentType.includes('x-www-form-urlencoded') ||
+        data.includes('encResponse=') ||
+        data.includes('enc_response=')
+      ) {
+        data = Object.fromEntries(new URLSearchParams(data)) as Record<string, unknown>;
+      } else if (data.trim().startsWith('{')) {
+        try {
+          data = JSON.parse(data) as Record<string, unknown>;
+        } catch {
+          // keep as string
+        }
+      }
+    }
+
     // Write response debug to file
     const responseDebug = {
       timestamp: new Date().toISOString(),
       status: response.status,
       statusText: response.statusText,
-      headers: response.headers,
-      dataType: typeof response.data,
-      hasData: !!response.data,
-      dataKeys: response.data ? Object.keys(response.data) : [],
-      data: response.data,
+      contentType: response.headers?.['content-type'],
+      dataType: typeof data,
+      dataKeys: data && typeof data === 'object' && !Array.isArray(data) ? Object.keys(data) : [],
+      dataPreview: typeof data === 'string' ? data.substring(0, 500) : data,
     };
     fs.writeFileSync('./bbps-debug-response.json', JSON.stringify(responseDebug, null, 2));
 
     logger.info('BBPS API Response Status:', response.status);
-    logger.info('BBPS API Response Data:', JSON.stringify(response.data, null, 2));
+    logger.info('BBPS API Response dataType:', typeof data);
+    if (typeof data === 'string') {
+      logger.info('BBPS API Response Data (preview):', data.substring(0, 300));
+    } else {
+      logger.info('BBPS API Response Data:', JSON.stringify(data, null, 2));
+    }
 
-    const encResponse = response.data?.encResponse ?? response.data?.enc_response;
-    if (!response.data || !encResponse) {
-      const msg = response.data?.message || response.data?.errorMessage || response.data?.error;
+    const encResponse =
+      (typeof data === 'object' && data && (data.encResponse as string)) ??
+      (typeof data === 'object' && data && (data.enc_response as string));
+    if (!data || !encResponse) {
+      const msg =
+        typeof data === 'object' &&
+        data &&
+        ((data.message as string) || (data.errorMessage as string) || (data.error as string));
       logger.error('Invalid BBPS response structure:', {
-        hasData: !!response.data,
+        dataType: typeof data,
         hasEncResponse: !!encResponse,
-        responseKeys: response.data ? Object.keys(response.data) : [],
-        fullResponse: JSON.stringify(response.data, null, 2),
+        dataKeys: typeof data === 'object' && data && !Array.isArray(data) ? Object.keys(data) : [],
+        fullResponse: typeof data === 'string' ? data.substring(0, 500) : JSON.stringify(data, null, 2),
       });
-      throw new AppError(msg || 'Invalid response from BBPS', 500);
+      throw new AppError((msg as string) || 'Invalid response from BBPS', 500);
     }
 
     // Decrypt response
