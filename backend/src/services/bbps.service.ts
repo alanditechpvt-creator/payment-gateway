@@ -125,18 +125,20 @@ export const bbpsService = {
     logger.info('BBPS API Response Status:', response.status);
     logger.info('BBPS API Response Data:', JSON.stringify(response.data, null, 2));
 
-    if (!response.data || !response.data.encResponse) {
+    const encResponse = response.data?.encResponse ?? response.data?.enc_response;
+    if (!response.data || !encResponse) {
+      const msg = response.data?.message || response.data?.errorMessage || response.data?.error;
       logger.error('Invalid BBPS response structure:', {
         hasData: !!response.data,
-        hasEncResponse: !!(response.data && response.data.encResponse),
+        hasEncResponse: !!encResponse,
         responseKeys: response.data ? Object.keys(response.data) : [],
         fullResponse: JSON.stringify(response.data, null, 2),
       });
-      throw new AppError('Invalid response from BBPS', 500);
+      throw new AppError(msg || 'Invalid response from BBPS', 500);
     }
 
     // Decrypt response
-    const decrypted = decryptBBPSResponse(response.data.encResponse, config.bbps.workingKey);
+    const decrypted = decryptBBPSResponse(encResponse, config.bbps.workingKey);
     logger.info('Decrypted BBPS Response:', decrypted);
 
     // Parse XML response

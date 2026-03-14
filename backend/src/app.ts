@@ -12,6 +12,9 @@ import { storageService } from './services/storage.service';
 
 const app = express();
 
+// Trust proxy so X-Forwarded-For is used correctly behind Nginx (required for rate limiter)
+app.set('trust proxy', 1);
+
 // Security middleware - configure Helmet to allow cross-origin images
 app.use(helmet({
   crossOriginResourcePolicy: { policy: 'cross-origin' },
