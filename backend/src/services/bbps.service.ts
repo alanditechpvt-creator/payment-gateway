@@ -140,16 +140,16 @@ export const bbpsService = {
   try {
     // Bill Avenue required POST params: accessCode, requestId, encRequest, ver, instituteId
     const requestId = generateBBPSRequestId();
-    const params = new URLSearchParams();
-    params.append('accessCode', config.bbps.accessCode);
-    params.append('requestId', requestId);
-    params.append('encRequest', encRequest);
-    params.append('ver', '1.0');
-    params.append('instituteId', config.bbps.instituteId);
+    const formParams = new URLSearchParams();
+    formParams.append('accessCode', config.bbps.accessCode);
+    formParams.append('requestId', requestId);
+    formParams.append('encRequest', encRequest);
+    formParams.append('ver', '1.0');
+    formParams.append('instituteId', config.bbps.instituteId);
 
     const response = await axios.post(
       config.bbps.endpoints.billFetch,
-      params.toString(),
+      formParams.toString(),
       {
         headers: {
           'Content-Type': 'application/x-www-form-urlencoded',
@@ -566,11 +566,62 @@ ${ids.map((id) => `<billerId>${id}</billerId>`).join('\n')}
     }));
   },
 
-  /** Sync billers from Bill Avenue into DB (uses BBPS_BILLER_IDS). Top billers: Axis, ICICI, HDFC, SBI. */
-  async syncBillersToDb(): Promise<{ synced: number; billers: Array<{ billerId: string; billerName: string; isTopBiller: boolean }> }> {
-    const ids = config.bbps.billerIdsToFetch;
+  /**
+   * Fetch a single biller from Bill Avenue (Biller Info API) and store in DB.
+   * Use when user/admin adds a biller by 14-char ID so we can show it in the dropdown.
+   */
+  async fetchOneBillerAndStore(billerId: string): Promise<{ billerId: string; billerName: string; billerAliasName?: string; billerCategory?: string }> {
+    const id = String(billerId).trim().slice(0, 14);
+    if (id.length !== 14) {
+      throw new AppError('Biller ID must be exactly 14 characters.', 400);
+    }
+    const { billers } = await bbpsService.getBillerList([id]);
+    if (!billers.length) {
+      throw new AppError('Biller not found for this ID. Check with Bill Avenue.', 404);
+    }
+    const b = billers[0];
+    const name = (b.billerName || b.billerAliasName || '').toLowerCase();
+    const TOP_BILLER_NAMES = ['axis', 'icici', 'hdfc', 'sbi'];
+    const TOP_ORDER: Record<string, number> = { sbi: 1, hdfc: 2, icici: 3, axis: 4 };
+    const isTop = TOP_BILLER_NAMES.some((t) => name.includes(t));
+    const sortOrder = isTop ? (TOP_ORDER[TOP_BILLER_NAMES.find((t) => name.includes(t))!] ?? 50) : 100;
+    await prisma.bbpsBiller.upsert({
+      where: { billerId: b.billerId },
+      create: {
+        billerId: b.billerId,
+        billerName: b.billerName,
+        billerAliasName: b.billerAliasName,
+        billerCategory: b.billerCategory,
+        isTopBiller: isTop,
+        sortOrder,
+      },
+      update: {
+        billerName: b.billerName,
+        billerAliasName: b.billerAliasName,
+        billerCategory: b.billerCategory,
+        isTopBiller: isTop,
+        sortOrder,
+      },
+    });
+    return {
+      billerId: b.billerId,
+      billerName: b.billerName,
+      billerAliasName: b.billerAliasName,
+      billerCategory: b.billerCategory,
+    };
+  },
+
+  /** Sync billers from Bill Avenue into DB. Uses body.billerIds if provided, else BBPS_BILLER_IDS. Top billers: Axis, ICICI, HDFC, SBI. */
+  async syncBillersToDb(billerIdsFromRequest?: string[]): Promise<{ synced: number; billers: Array<{ billerId: string; billerName: string; isTopBiller: boolean }> }> {
+    const ids =
+      Array.isArray(billerIdsFromRequest) && billerIdsFromRequest.length > 0
+        ? billerIdsFromRequest.map((id) => String(id).trim().slice(0, 14)).filter((id) => id.length === 14)
+        : config.bbps.billerIdsToFetch;
     if (ids.length === 0) {
-      throw new AppError('Set BBPS_BILLER_IDS in .env (comma-separated 14-char biller IDs from Bill Avenue) to sync billers.', 400);
+      throw new AppError(
+        'Provide billerIds in request body (array of 14-char IDs) or set BBPS_BILLER_IDS in .env to sync billers.',
+        400
+      );
     }
     const { billers } = await bbpsService.getBillerList(ids);
     const TOP_BILLER_NAMES = ['axis', 'icici', 'hdfc', 'sbi'];

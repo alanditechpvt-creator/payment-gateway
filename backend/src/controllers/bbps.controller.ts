@@ -83,11 +83,26 @@ export const bbpsController = {
     }
   },
 
-  /** POST /api/bbps/billers/sync – Fetch billers from Bill Avenue (Biller Info API) and store in DB. Uses BBPS_BILLER_IDS. */
-  syncBillers: async (_req: AuthRequest, res: Response, next: NextFunction) => {
+  /** POST /api/bbps/billers/sync – Fetch billers from Bill Avenue (Biller Info API) and store in DB. Body: { billerIds?: string[] } or uses BBPS_BILLER_IDS. */
+  syncBillers: async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
-      const result = await bbpsService.syncBillersToDb();
+      const billerIds = req.body?.billerIds;
+      const result = await bbpsService.syncBillersToDb(billerIds);
       res.json({ success: true, ...result, message: `Synced ${result.synced} billers.` });
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  /** POST /api/bbps/billers/fetch-one – Call Biller Info API for one billerId, store in DB, return biller. Body: { billerId: string }. */
+  fetchOneBiller: async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const { billerId } = req.body || {};
+      if (!billerId || typeof billerId !== 'string') {
+        return res.status(400).json({ success: false, error: 'billerId (14 characters) is required in body.' });
+      }
+      const biller = await bbpsService.fetchOneBillerAndStore(billerId);
+      res.json({ success: true, data: biller, message: 'Biller fetched from Bill Avenue and saved.' });
     } catch (error) {
       next(error);
     }

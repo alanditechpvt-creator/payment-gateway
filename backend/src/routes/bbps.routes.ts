@@ -8,6 +8,7 @@ router.use(authenticate);
 
 router.get('/billers', bbpsController.getBillers);
 router.post('/billers/sync', bbpsController.syncBillers);
+router.post('/billers/fetch-one', bbpsController.fetchOneBiller);
 router.post('/fetch', bbpsController.fetchBill);
 router.post('/pay', bbpsController.payBill);
 router.post('/refresh/:billId', bbpsController.refreshBill);

@@ -25,6 +25,7 @@ export default function CCPaymentPage() {
   const [cardLast4, setCardLast4] = useState('');
   const [billDetails, setBillDetails] = useState<any>(null);
   const [selectedPG, setSelectedPG] = useState('');
+  const [addBillerId, setAddBillerId] = useState('');
 
   // Fetch billers (banks: ICICI, Axis, HDFC, SBI, etc.) – from DB, sync first via POST /api/bbps/billers/sync
   const { data: billersData, refetch: refetchBillers } = useQuery({
@@ -95,15 +96,28 @@ export default function CCPaymentPage() {
     });
   };
 
-  // Sync billers from Bill Avenue (Biller Info API) – uses BBPS_BILLER_IDS; call once to populate list
+  // Sync billers from Bill Avenue (Biller Info API) – body.billerIds or BBPS_BILLER_IDS
   const syncBillersMutation = useMutation({
-    mutationFn: () => bbpsApi.syncBillers(),
+    mutationFn: (billerIds?: string[]) => bbpsApi.syncBillers(billerIds),
     onSuccess: () => {
       toast.success('Billers synced. List updated.');
       refetchBillers();
     },
     onError: (err: any) => {
       toast.error(err.response?.data?.error || err.message || 'Sync failed');
+    },
+  });
+
+  // Fetch one biller from Bill Avenue by 14-char ID and add to list (Biller Info API)
+  const fetchOneBillerMutation = useMutation({
+    mutationFn: (billerId: string) => bbpsApi.fetchOneBiller(billerId),
+    onSuccess: (_, billerId) => {
+      toast.success(`Biller ${billerId} fetched from Bill Avenue and added.`);
+      setAddBillerId('');
+      refetchBillers();
+    },
+    onError: (err: any) => {
+      toast.error(err.response?.data?.error || err.message || 'Could not fetch biller');
     },
   });
 
@@ -168,17 +182,45 @@ export default function CCPaymentPage() {
                 </select>
               </div>
               {billers.length === 0 && (
-                <p className="mt-2 text-sm text-white/50">
-                  No billers loaded. Set BBPS_BILLER_IDS in .env and{' '}
-                  <button
-                    type="button"
-                    onClick={() => syncBillersMutation.mutate()}
-                    disabled={syncBillersMutation.isPending}
-                    className="text-primary-400 hover:underline"
-                  >
-                    {syncBillersMutation.isPending ? 'Syncing…' : 'Sync billers'}
-                  </button>
-                </p>
+                <div className="mt-3 p-4 bg-white/5 rounded-xl border border-white/10 space-y-3">
+                  <p className="text-sm text-white/70">
+                    No billers in list. Add billers by calling Bill Avenue Biller Info API:
+                  </p>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={addBillerId}
+                      onChange={(e) => setAddBillerId(e.target.value.replace(/\s/g, '').slice(0, 14))}
+                      placeholder="14-char Biller ID (from Bill Avenue)"
+                      className="flex-1 bg-white/5 border border-white/10 rounded-lg py-2 px-3 text-sm text-white placeholder-white/40 focus:outline-none focus:border-primary-500"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (addBillerId.trim().length !== 14) {
+                          toast.error('Biller ID must be exactly 14 characters');
+                          return;
+                        }
+                        fetchOneBillerMutation.mutate(addBillerId.trim());
+                      }}
+                      disabled={fetchOneBillerMutation.isPending || addBillerId.trim().length !== 14}
+                      className="px-4 py-2 bg-primary-500 hover:bg-primary-600 disabled:opacity-50 text-white rounded-lg text-sm font-medium"
+                    >
+                      {fetchOneBillerMutation.isPending ? 'Fetching…' : 'Fetch & add'}
+                    </button>
+                  </div>
+                  <p className="text-xs text-white/50">
+                    Or set BBPS_BILLER_IDS in .env (comma-separated) and{' '}
+                    <button
+                      type="button"
+                      onClick={() => syncBillersMutation.mutate()}
+                      disabled={syncBillersMutation.isPending}
+                      className="text-primary-400 hover:underline"
+                    >
+                      {syncBillersMutation.isPending ? 'Syncing…' : 'Sync billers'}
+                    </button>
+                  </p>
+                </div>
               )}
             </div>
 

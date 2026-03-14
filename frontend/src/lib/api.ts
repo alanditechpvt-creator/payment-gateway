@@ -186,7 +186,10 @@ export const configApi = {
 export const bbpsApi = {
   getBillers: (params?: { category?: string }) =>
     api.get('/bbps/billers', { params: params?.category ? { category: params.category } : {} }),
-  syncBillers: () => api.post('/bbps/billers/sync'),
+  syncBillers: (billerIds?: string[]) =>
+    api.post('/bbps/billers/sync', billerIds != null ? { billerIds } : {}),
+  /** Fetch one biller from Bill Avenue by 14-char ID and store in DB. */
+  fetchOneBiller: (billerId: string) => api.post('/bbps/billers/fetch-one', { billerId }),
   fetchBill: (data: any) => api.post('/bbps/fetch', data),
   payBill: (data: any) => api.post('/bbps/pay', data),
 };
