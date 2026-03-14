@@ -90,9 +90,9 @@ export default function CCPaymentPage() {
     }
     
     payBillMutation.mutate({
-      amount: billDetails.billAmount,
-      mobileNumber: billDetails.params.mobileNumber,
-      cardLast4: billDetails.params.cardLast4,
+      amount: billDetails.amount ?? billDetails.billAmount,
+      mobileNumber: billDetails.mobileNumber ?? mobileNumber,
+      cardLast4: billDetails.cardLast4 ?? cardLast4,
       billerName: billDetails.billerName,
       pgId: selectedPG,
     });
@@ -201,7 +201,7 @@ export default function CCPaymentPage() {
                 <div className="pt-3 border-t border-white/10 flex justify-between items-center">
                   <span className="text-white/60">Bill Amount</span>
                   <span className="text-2xl font-bold text-white">
-                    ₹{billDetails.billAmount.toLocaleString('en-IN')}
+                    ₹{(billDetails.amount ?? billDetails.billAmount ?? 0).toLocaleString('en-IN')}
                   </span>
                 </div>
               </div>
@@ -250,7 +250,7 @@ export default function CCPaymentPage() {
                 ) : (
                   <>
                     <BanknotesIcon className="w-6 h-6" />
-                    Pay ₹{billDetails.billAmount.toLocaleString('en-IN')}
+                    Pay ₹{(billDetails.amount ?? billDetails.billAmount ?? 0).toLocaleString('en-IN')}
                   </>
                 )}
               </button>

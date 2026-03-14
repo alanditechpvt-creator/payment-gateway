@@ -65,9 +65,9 @@ export default function CCPaymentScreen({ navigation }: any) {
       }
       
       const res = await bbpsApi.payBill({
-        amount: billDetails.billAmount,
-        mobileNumber: billDetails.params.mobileNumber,
-        cardLast4: billDetails.params.cardLast4,
+        amount: billDetails.amount ?? billDetails.billAmount,
+        mobileNumber: billDetails.mobileNumber ?? mobileNumber,
+        cardLast4: billDetails.cardLast4 ?? cardLast4,
         billerName: billDetails.billerName,
         pgId: payoutPg.id
       });
@@ -161,7 +161,7 @@ export default function CCPaymentScreen({ navigation }: any) {
             </View>
             <View style={[styles.billRow, styles.amountRow]}>
               <Text style={styles.billLabel}>Bill Amount</Text>
-              <Text style={styles.amountValue}>₹{billDetails.billAmount.toLocaleString('en-IN')}</Text>
+              <Text style={styles.amountValue}>₹{(billDetails.amount ?? billDetails.billAmount ?? 0).toLocaleString('en-IN')}</Text>
             </View>
           </View>
 
@@ -173,7 +173,7 @@ export default function CCPaymentScreen({ navigation }: any) {
             {paymentLoading ? (
               <ActivityIndicator color="#fff" />
             ) : (
-              <Text style={styles.payButtonText}>Pay ₹{billDetails.billAmount.toLocaleString('en-IN')}</Text>
+              <Text style={styles.payButtonText}>Pay ₹{(billDetails.amount ?? billDetails.billAmount ?? 0).toLocaleString('en-IN')}</Text>
             )}
           </TouchableOpacity>
         </View>
