@@ -50,27 +50,54 @@ export const bbpsService = {
     };
   }
 
+  // Bill Avenue requires billerId exactly 14 chars (per BBPS doc)
+  const billerId = (params.billerId || config.bbps.creditCardBillerId || '').trim().slice(0, 14);
+  if (billerId.length !== 14) {
+    throw new AppError(
+      'BBPS billerId is required and must be 14 characters. Set BBPS_CREDIT_CARD_BILLER_ID in .env or pass billerId in the request.',
+      400
+    );
+  }
+
   // Generate reference ID with Julian suffix
   const refId = generateBBPSRequestId();
 
-  // Build XML request for BillAvenue
-  const xml = `<?xml version="1.0" encoding="UTF-8"?>
+  // Build XML request per BBPS doc: agentDeviceInfo, agentId, billerId, customerInfo, inputParams (order matters)
+  // Credit Card biller requires inputParams: Registered Mobile No, Last 4 Digits of Credit Card
+  const agentId = String(config.bbps.agentId || '').trim().slice(0, 20).padEnd(20, '0');
+  const xml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <billFetchRequest>
-  <agentId>${config.bbps.agentId}</agentId>
-  <billerId>${params.billerId || ''}</billerId>
-  <agentDeviceInfo>
-    <ip>72.61.254.18</ip>
-    <initChannel>${config.bbps.paymentChannel}</initChannel>
-  </agentDeviceInfo>
-  <customerInfo>
-    <customerMobile>${params.mobileNumber}</customerMobile>
-  </customerInfo>
+<agentDeviceInfo>
+<ip>72.61.254.18</ip>
+<initChannel>${config.bbps.paymentChannel}</initChannel>
+<mac>A1-B2-C3-D4-E5-F6</mac>
+</agentDeviceInfo>
+<agentId>${agentId}</agentId>
+<billerId>${billerId}</billerId>
+<customerInfo>
+<customerMobile>${params.mobileNumber}</customerMobile>
+</customerInfo>
+<inputParams>
+<input>
+<paramName>Registered Mobile No</paramName>
+<paramValue>${params.mobileNumber}</paramValue>
+</input>
+<input>
+<paramName>Last 4 Digits of Credit Card</paramName>
+<paramValue>${params.cardLast4 || '0000'}</paramValue>
+</input>
+</inputParams>
 </billFetchRequest>`;
 
   logger.info('BBPS Bill Fetch Request XML:', xml);
 
-  // Encrypt the XML (IV from config if Bill Avenue shared separately)
-  const encRequest = encryptBBPSRequest(xml, config.bbps.workingKey, config.bbps.iv);
+  // Encrypt the XML (IV from config, or zero IV if BBPS_IV_USE_ZERO=true)
+  const encRequest = encryptBBPSRequest(
+    xml,
+    config.bbps.workingKey,
+    config.bbps.iv,
+    config.bbps.ivUseZero
+  );
   
   logger.info('BBPS Encrypted Request:', { length: encRequest.length, sample: encRequest.substring(0, 80) + '...' });
 
@@ -211,7 +238,7 @@ export const bbpsService = {
         data: {
           userId,
           category: 'CREDIT_CARD',
-          billerId: params.billerId || '',
+          billerId: billerId,
           billerName: billDataPlain.billerName || 'Credit Card',
           mobileNumber: params.mobileNumber,
           cardLast4: params.cardLast4 || billDataPlain.cardLast4 || '',
@@ -260,7 +287,12 @@ export const bbpsService = {
     // Decrypt response (same IV as encrypt)
     let decrypted: string;
     try {
-      decrypted = decryptBBPSResponse(encResponse, config.bbps.workingKey, config.bbps.iv);
+      decrypted = decryptBBPSResponse(
+        encResponse,
+        config.bbps.workingKey,
+        config.bbps.iv,
+        config.bbps.ivUseZero
+      );
     } catch (decErr: any) {
       logger.error('BBPS response decryption failed', { message: decErr?.message });
       throw new AppError('Invalid or corrupted response from BBPS', 500);
@@ -287,7 +319,7 @@ export const bbpsService = {
       data: {
         userId,
         category: 'CREDIT_CARD',
-        billerId: params.billerId || '',
+        billerId: billerId,
         billerName: billData.billerName || 'Credit Card',
         mobileNumber: params.mobileNumber,
         cardLast4: params.cardLast4 || billData.cardLast4 || '',

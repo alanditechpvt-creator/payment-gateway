@@ -127,7 +127,9 @@ export const config = {
 
   // Payment Gateway: BBPS (Live API)
   bbps: (() => {
-    const env = (process.env.BBPS_ENDPOINT || 'staging').toLowerCase();
+    // Default: production when NODE_ENV=production (e.g. VPS), otherwise staging for local dev
+    const defaultEnv = process.env.NODE_ENV === 'production' ? 'production' : 'staging';
+    const env = (process.env.BBPS_ENDPOINT || defaultEnv).toLowerCase();
     const baseUrl = env === 'production'
       ? 'https://api.billavenue.com/billpay'
       : env === 'staging'
@@ -138,12 +140,16 @@ export const config = {
       enabled: process.env.BBPS_ENABLED === 'true',
       accessCode: process.env.BBPS_ACCESS_CODE || '',
       workingKey: process.env.BBPS_WORKING_KEY || '',
-      /** Optional: IV shared separately by Bill Avenue (16 bytes, hex string = 32 chars). If not set, default IV per spec is used. */
+      /** Optional: IV shared separately by Bill Avenue (16 bytes, hex string = 32 chars). If not set, default IV is used. */
       iv: process.env.BBPS_IV || null,
+      /** If true, use zero IV when BBPS_IV is not set (fixes "Invalid ENC request" for some Bill Avenue setups). */
+      ivUseZero: process.env.BBPS_IV_USE_ZERO === 'true',
       agentId: process.env.BBPS_AGENT_ID || '',
       instituteId: process.env.BBPS_AGENT_INSTITUTION_ID || '',
       instituteName: process.env.BBPS_AGENT_INSTITUTION_NAME || '',
       paymentChannel: process.env.BBPS_PAYMENT_CHANNEL || 'AGT',
+      /** Default biller ID for Credit Card (14 chars). Override per request via params.billerId. */
+      creditCardBillerId: (process.env.BBPS_CREDIT_CARD_BILLER_ID || '').trim().slice(0, 14),
       endpoints: {
         billerMdm: `${baseUrl}/extMdmCntrl/mdmRequestNew/xml`,
         billFetch: `${baseUrl}/extBillCntrl/billFetchRequest/xml`,
