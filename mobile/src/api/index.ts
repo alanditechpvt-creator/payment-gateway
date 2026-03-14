@@ -1,10 +1,9 @@
 import axios from 'axios';
 import * as SecureStore from 'expo-secure-store';
 
-// For real devices, always use your machine's LAN IP.
-// You can still override this via EXPO_PUBLIC_API_URL if needed.
-const DEV_API_URL = 'http://192.168.31.250:4100/api';
-const API_URL = process.env.EXPO_PUBLIC_API_URL || DEV_API_URL;
+// Production API. For local dev, set EXPO_PUBLIC_API_URL to your LAN IP (e.g. http://192.168.x.x:4100/api).
+const PRODUCTION_API_URL = 'https://pay.alandi.in/api';
+const API_URL = process.env.EXPO_PUBLIC_API_URL || PRODUCTION_API_URL;
 console.log('🌐 Mobile API URL:', API_URL);
 
 export const api = axios.create({
