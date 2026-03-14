@@ -213,7 +213,7 @@ export default function CCPaymentPage() {
                     Or set BBPS_BILLER_IDS in .env (comma-separated) and{' '}
                     <button
                       type="button"
-                      onClick={() => syncBillersMutation.mutate()}
+                      onClick={() => syncBillersMutation.mutate(undefined)}
                       disabled={syncBillersMutation.isPending}
                       className="text-primary-400 hover:underline"
                     >
