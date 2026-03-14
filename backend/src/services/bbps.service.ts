@@ -109,6 +109,25 @@ export const bbpsService = {
       }
     );
 
+    // Detect HTML error pages (e.g. Bill Avenue "Access Denied" / IP or credential rejection)
+    const raw = response.data;
+    if (typeof raw === 'string') {
+      const lower = raw.toLowerCase();
+      if (
+        (lower.includes('access denied') || lower.includes('unauthorized access')) &&
+        (lower.includes('<html') || lower.includes('<!doctype'))
+      ) {
+        logger.error('BBPS API returned HTML access denied page', {
+          contentType: response.headers?.['content-type'],
+          preview: raw.substring(0, 400),
+        });
+        throw new AppError(
+          'BBPS access denied. Check with the provider: credentials (accessCode/workingKey) and IP whitelisting for this server.',
+          403
+        );
+      }
+    }
+
     // Normalize response: API may return string (form-urlencoded or JSON)
     let data: Record<string, unknown> | string = response.data;
     if (typeof data === 'string') {
@@ -156,12 +175,13 @@ export const bbpsService = {
         typeof data === 'object' &&
         data &&
         ((data.message as string) || (data.errorMessage as string) || (data.error as string));
-      logger.error('Invalid BBPS response structure:', {
+      const debug = {
         dataType: typeof data,
         hasEncResponse: !!encResponse,
         dataKeys: typeof data === 'object' && data && !Array.isArray(data) ? Object.keys(data) : [],
-        fullResponse: typeof data === 'string' ? data.substring(0, 500) : JSON.stringify(data, null, 2),
-      });
+        fullResponse: typeof data === 'string' ? data.substring(0, 800) : data,
+      };
+      logger.error('Invalid BBPS response structure: ' + JSON.stringify(debug));
       throw new AppError((msg as string) || 'Invalid response from BBPS', 500);
     }
 
