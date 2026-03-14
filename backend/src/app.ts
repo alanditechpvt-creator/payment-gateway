@@ -30,6 +30,9 @@ const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
   max: config.isDevelopment ? 1000 : 100, // Higher limit for development
   message: { success: false, error: 'Too many requests, please try again later.' },
+  // In addition to app.set('trust proxy', 1), disable strict X-Forwarded-For validation
+  // so deployments with misconfigured proxies don't crash the server.
+  validate: { xForwardedForHeader: false },
   skip: (req) => {
     // Skip rate limiting for development if needed
     return config.isDevelopment && req.path.includes('/auth/login');
