@@ -5,6 +5,7 @@
 import React, { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { motion } from 'framer-motion';
+import { XMarkIcon, ArrowLeftIcon, PencilIcon, PlusIcon } from '@heroicons/react/24/outline';
 import toast from 'react-hot-toast';
 
 function SchemaRatesModal({ schema, allPGs, onClose }: { schema: any; allPGs: any[]; onClose: () => void }) {
