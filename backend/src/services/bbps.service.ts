@@ -143,7 +143,8 @@ export const bbpsService = {
       if (
         contentType.includes('x-www-form-urlencoded') ||
         data.includes('encResponse=') ||
-        data.includes('enc_response=')
+        data.includes('enc_response=') ||
+        data.includes('encData=')
       ) {
         data = Object.fromEntries(new URLSearchParams(data)) as Record<string, unknown>;
       } else if (data.trim().startsWith('{')) {
@@ -175,9 +176,72 @@ export const bbpsService = {
       logger.info('BBPS API Response Data:', JSON.stringify(data, null, 2));
     }
 
+    // Bill Avenue may return encResponse/enc_response/encData in form, or raw hex body
+    const strData = typeof data === 'string' ? data.trim() : '';
+    const objData = typeof data === 'object' && data && !Array.isArray(data) ? data : null;
+    // Encrypted payload: form keys, raw hex body, or base64 body (convert to hex for decrypt)
+    const rawHex =
+      strData && /^[0-9a-fA-F]+$/.test(strData) && strData.length >= 32 && strData.length % 2 === 0 ? strData : null;
+    const base64Decoded =
+      strData &&
+      strData.length >= 32 &&
+      /^[A-Za-z0-9+/]+=*$/.test(strData) &&
+      strData.length % 4 === 0
+        ? Buffer.from(strData, 'base64').toString('hex')
+        : null;
     const encResponse =
-      (typeof data === 'object' && data && (data.encResponse as string)) ??
-      (typeof data === 'object' && data && (data.enc_response as string));
+      (objData && (objData.encResponse as string)) ??
+      (objData && (objData.enc_response as string)) ??
+      (objData && (objData.encData as string)) ??
+      (objData && (objData.enc_data as string)) ??
+      rawHex ??
+      (base64Decoded && base64Decoded.length >= 32 ? base64Decoded : null);
+
+    // If response is plain XML (e.g. /xml endpoint returning decrypted XML)
+    if (strData && (strData.startsWith('<?xml') || strData.startsWith('<billFetchResponse') || (strData.startsWith('<') && strData.includes('billFetchResponse')))) {
+      const codeMatch = strData.match(/<responseCode>(.*?)<\/responseCode>/i);
+      const code = codeMatch ? codeMatch[1].trim() : '';
+      if (code && code !== '000') {
+        const errMsgMatch = strData.match(/<errorMessage>(.*?)<\/errorMessage>/i);
+        throw new AppError(errMsgMatch ? errMsgMatch[1].trim() : `BBPS error (code ${code})`, 400);
+      }
+      logger.info('BBPS API returned plain XML (no decryption)');
+      const billDataPlain = parseXMLResponse(strData);
+      const savedBillPlain = await prisma.cachedBill.create({
+        data: {
+          userId,
+          category: 'CREDIT_CARD',
+          billerId: params.billerId || '',
+          billerName: billDataPlain.billerName || 'Credit Card',
+          mobileNumber: params.mobileNumber,
+          cardLast4: params.cardLast4 || billDataPlain.cardLast4 || '',
+          billNumber: billDataPlain.billNumber || refId,
+          billDate: billDataPlain.billDate ? new Date(billDataPlain.billDate) : new Date(),
+          dueDate: billDataPlain.dueDate ? new Date(billDataPlain.dueDate) : new Date(),
+          amount: billDataPlain.amount || 0,
+          customerName: billDataPlain.customerName || '',
+          status: 'PENDING',
+          expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+          rawResponse: strData,
+        },
+      });
+      return {
+        success: true,
+        cached: false,
+        data: {
+          id: savedBillPlain.id,
+          billerName: savedBillPlain.billerName,
+          amount: savedBillPlain.amount || 0,
+          dueDate: savedBillPlain.dueDate,
+          billDate: savedBillPlain.billDate,
+          billNumber: savedBillPlain.billNumber,
+          customerName: savedBillPlain.customerName,
+          status: savedBillPlain.status,
+          cardLast4: savedBillPlain.cardLast4,
+        },
+      };
+    }
+
     if (!data || !encResponse) {
       const msg =
         typeof data === 'object' &&
@@ -194,8 +258,26 @@ export const bbpsService = {
     }
 
     // Decrypt response (same IV as encrypt)
-    const decrypted = decryptBBPSResponse(encResponse, config.bbps.workingKey, config.bbps.iv);
+    let decrypted: string;
+    try {
+      decrypted = decryptBBPSResponse(encResponse, config.bbps.workingKey, config.bbps.iv);
+    } catch (decErr: any) {
+      logger.error('BBPS response decryption failed', { message: decErr?.message });
+      throw new AppError('Invalid or corrupted response from BBPS', 500);
+    }
     logger.info('Decrypted BBPS Response:', decrypted);
+
+    // Bill Avenue success = responseCode 000 (per BBPS doc)
+    const responseCodeMatch = decrypted.match(/<responseCode>(.*?)<\/responseCode>/i);
+    const responseCode = responseCodeMatch ? responseCodeMatch[1].trim() : '';
+    if (responseCode && responseCode !== '000') {
+      const errMsgMatch = decrypted.match(/<errorMessage>(.*?)<\/errorMessage>/i);
+      const errCodeMatch = decrypted.match(/<errorCode>(.*?)<\/errorCode>/i);
+      const errMsg = errMsgMatch ? errMsgMatch[1].trim() : `BBPS error (code ${responseCode})`;
+      const errCode = errCodeMatch ? errCodeMatch[1].trim() : '';
+      logger.error('BBPS API error response', { responseCode, errCode, errMsg });
+      throw new AppError(errMsg, 400);
+    }
 
     // Parse XML response
     const billData = parseXMLResponse(decrypted);
