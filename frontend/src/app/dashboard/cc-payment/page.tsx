@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { motion } from 'framer-motion';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { bbpsApi, pgApi } from '@/lib/api';
@@ -27,12 +27,20 @@ export default function CCPaymentPage() {
   const [selectedPG, setSelectedPG] = useState('');
   const [addBillerId, setAddBillerId] = useState('');
 
-  // Fetch billers (banks: ICICI, Axis, HDFC, SBI, etc.) – from DB, sync first via POST /api/bbps/billers/sync
-  const { data: billersData, refetch: refetchBillers } = useQuery({
+  // Fetch billers (banks: ICICI, Axis, HDFC, SBI, etc.) – from DB; sync populates from Bill Avenue
+  const { data: billersData, refetch: refetchBillers, isSuccess: billersLoaded } = useQuery({
     queryKey: ['bbps-billers', 'CREDIT_CARD'],
     queryFn: () => bbpsApi.getBillers({ category: 'CREDIT_CARD' }),
   });
-  const billers = billersData?.data?.data ?? [];
+  const billers = Array.isArray(billersData?.data?.data) ? billersData.data.data : [];
+  const autoSyncDone = useRef(false);
+
+  // When page loads and biller list is empty, try to sync once (uses BBPS_BILLER_IDS on server)
+  useEffect(() => {
+    if (!billersLoaded || billers.length > 0 || autoSyncDone.current) return;
+    autoSyncDone.current = true;
+    syncBillersMutation.mutate(undefined);
+  }, [billersLoaded, billers.length]);
 
   // Fetch PGs
   const { data: pgsData } = useQuery({
@@ -173,7 +181,13 @@ export default function CCPaymentPage() {
                   className="w-full bg-white/5 border border-white/10 rounded-xl py-3 pl-12 pr-4 focus:outline-none focus:border-primary-500 transition-colors appearance-none text-white"
                   required
                 >
-                  <option value="" className="bg-gray-900 text-white">Select bank (e.g. ICICI, HDFC, SBI, Axis)</option>
+                  <option value="" className="bg-gray-900 text-white">
+                    {syncBillersMutation.isPending && billers.length === 0
+                      ? 'Loading bank list…'
+                      : billers.length === 0
+                        ? 'No banks loaded — add Biller IDs below or set BBPS_BILLER_IDS'
+                        : 'Select bank (e.g. ICICI, HDFC, SBI, Axis)'}
+                  </option>
                   {billers.map((b: any) => (
                     <option key={b.billerId} value={b.billerId} className="bg-gray-900 text-white">
                       {b.billerName || b.billerAliasName || b.billerId}

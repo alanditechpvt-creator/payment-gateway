@@ -150,8 +150,12 @@ export const config = {
       paymentChannel: process.env.BBPS_PAYMENT_CHANNEL || 'AGT',
       /** Default biller ID for Credit Card (14 chars). Override per request via params.billerId. */
       creditCardBillerId: (process.env.BBPS_CREDIT_CARD_BILLER_ID || '').trim().slice(0, 14),
-      /** Comma-separated biller IDs to fetch from Biller Info API (1–2000). Used to get list and resolve Credit Card biller. */
-      billerIdsToFetch: (process.env.BBPS_BILLER_IDS || '')
+      /** Comma-separated biller IDs to fetch from Biller Info API (1–2000). BBPS_DEFAULT_BILLER_IDS used when this is empty. */
+      billerIdsToFetch: (
+        process.env.BBPS_BILLER_IDS ||
+        process.env.BBPS_DEFAULT_BILLER_IDS ||
+        ''
+      )
         .split(',')
         .map((id) => id.trim().slice(0, 14))
         .filter((id) => id.length === 14),
