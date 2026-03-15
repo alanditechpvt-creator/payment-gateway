@@ -589,7 +589,12 @@ ${ids.map((id) => `<billerId>${id}</billerId>`).join('\n')}
           return obj;
         });
       } else {
-        const XLSX = require('xlsx');
+        let XLSX: any;
+        try {
+          XLSX = require('xlsx');
+        } catch {
+          throw new AppError('xlsx module not found. In backend folder run: npm install', 500);
+        }
         const wb = XLSX.read(buffer, { type: 'buffer', cellDates: false });
         const firstSheet = wb.SheetNames[0];
         if (!firstSheet) throw new AppError('Excel file has no sheet', 400);
