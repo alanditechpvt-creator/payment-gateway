@@ -404,14 +404,21 @@ export const bbpsService = {
       },
     };
   } catch (error: any) {
+    const status = error.response?.status;
     const msg = (error.response?.data?.message ?? error.response?.data ?? error.message)?.toString?.() || error.message;
     logger.error('BBPS API call failed - Full Error:', {
       message: error.message,
-      status: error.response?.status,
+      status,
       statusText: error.response?.statusText,
       data: error.response?.data,
       requestUrl: error.config?.url,
     });
+    if (status === 404) {
+      throw new AppError(
+        `Bill Avenue returned 404 (URL not found). Set BBPS_BILL_FETCH_URL in .env to the exact bill fetch URL provided by Bill Avenue. Current URL: ${error.config?.url || config.bbps.endpoints.billFetch}`,
+        404
+      );
+    }
     // "Invalid ENC request" usually means encryption/IV/key or format mismatch
     if (msg && /invalid\s*enc\s*request/i.test(msg)) {
       const hint =

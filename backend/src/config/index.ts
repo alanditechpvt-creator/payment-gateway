@@ -167,7 +167,7 @@ export const config = {
         .filter((id) => id.length === 14),
       endpoints: {
         billerMdm: `${baseUrl}/extMdmCntrl/mdmRequestNew/xml`,
-        billFetch: `${baseUrl}/extBillCntrl/billFetchRequest/xml`,
+        billFetch: process.env.BBPS_BILL_FETCH_URL || `${baseUrl}/extBillCntrl/billFetchRequest/xml`,
         billPayment: `${baseUrl}/extBillPayCntrl/billPayRequest/xml`,
         complaintRegistration: `${baseUrl}/extComplaints/register/xml`,
         complaintTracking: `${baseUrl}/extComplaints/track/xml`,
