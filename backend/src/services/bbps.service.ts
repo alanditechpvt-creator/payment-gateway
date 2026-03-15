@@ -72,8 +72,9 @@ export const bbpsService = {
     );
   }
 
-  // Generate reference ID with Julian suffix
-  const refId = generateBBPSRequestId();
+  // Single request ID for both form and tracking (Bill Avenue may validate consistency)
+  const requestId = generateBBPSRequestId();
+  const refId = requestId;
 
   // Build XML request per BBPS doc: agentDeviceInfo, agentId, billerId, customerInfo, inputParams (order matters)
   // Credit Card biller requires inputParams: Registered Mobile No, Last 4 Digits of Credit Card
@@ -121,17 +122,18 @@ export const bbpsService = {
     credentialsLoaded: hasCreds,
   });
 
-  const fs = require('fs');
-  const debugInfo = {
-    timestamp: new Date().toISOString(),
-    url: config.bbps.endpoints.billFetch,
-    credentialsLoaded: hasCreds,
-    xml: xml,
-    encRequestLength: encRequest.length,
-    encRequestSample: encRequest.substring(0, 200),
-    fullEncRequest: encRequest,
-  };
-  fs.writeFileSync('./bbps-debug-request.json', JSON.stringify(debugInfo, null, 2));
+  if (config.nodeEnv !== 'production') {
+    const fs = require('fs');
+    const debugInfo = {
+      timestamp: new Date().toISOString(),
+      url: config.bbps.endpoints.billFetch,
+      credentialsLoaded: hasCreds,
+      xml: xml,
+      encRequestLength: encRequest.length,
+      encRequestSample: encRequest.substring(0, 200),
+    };
+    try { fs.writeFileSync('./bbps-debug-request.json', JSON.stringify(debugInfo, null, 2)); } catch (_) {}
+  }
 
   if (!config.bbps.instituteId) {
     throw new AppError('BBPS instituteId (BBPS_AGENT_INSTITUTION_ID) is not configured', 500);
@@ -139,11 +141,15 @@ export const bbpsService = {
 
   try {
     // Bill Avenue required POST params: accessCode, requestId, encRequest, ver, instituteId
-    const requestId = generateBBPSRequestId();
     const formParams = new URLSearchParams();
     formParams.append('accessCode', config.bbps.accessCode);
     formParams.append('requestId', requestId);
-    formParams.append('encRequest', encRequest);
+    // Some setups expect base64-encoded encRequest (set BBPS_ENC_REQUEST_BASE64=true)
+    const encPayload =
+      process.env.BBPS_ENC_REQUEST_BASE64 === 'true'
+        ? Buffer.from(encRequest, 'hex').toString('base64')
+        : encRequest;
+    formParams.append('encRequest', encPayload);
     formParams.append('ver', '1.0');
     formParams.append('instituteId', config.bbps.instituteId);
 
@@ -196,17 +202,17 @@ export const bbpsService = {
       }
     }
 
-    // Write response debug to file
-    const responseDebug = {
-      timestamp: new Date().toISOString(),
-      status: response.status,
-      statusText: response.statusText,
-      contentType: response.headers?.['content-type'],
-      dataType: typeof data,
-      dataKeys: data && typeof data === 'object' && !Array.isArray(data) ? Object.keys(data) : [],
-      dataPreview: typeof data === 'string' ? data.substring(0, 500) : data,
-    };
-    fs.writeFileSync('./bbps-debug-response.json', JSON.stringify(responseDebug, null, 2));
+    if (config.nodeEnv !== 'production') {
+      const fs = require('fs');
+      const responseDebug = {
+        timestamp: new Date().toISOString(),
+        status: response.status,
+        dataType: typeof data,
+        dataKeys: data && typeof data === 'object' && !Array.isArray(data) ? Object.keys(data) : [],
+        dataPreview: typeof data === 'string' ? data.substring(0, 500) : data,
+      };
+      try { fs.writeFileSync('./bbps-debug-response.json', JSON.stringify(responseDebug, null, 2)); } catch (_) {}
+    }
 
     logger.info('BBPS API Response Status:', response.status);
     logger.info('BBPS API Response dataType:', typeof data);
@@ -363,19 +369,21 @@ export const bbpsService = {
       },
     };
   } catch (error: any) {
+    const msg = (error.response?.data?.message ?? error.response?.data ?? error.message)?.toString?.() || error.message;
     logger.error('BBPS API call failed - Full Error:', {
       message: error.message,
       status: error.response?.status,
       statusText: error.response?.statusText,
       data: error.response?.data,
-      headers: error.response?.headers,
       requestUrl: error.config?.url,
-      requestData: error.config?.data,
     });
-    throw new AppError(
-      error.response?.data?.message || error.message || 'Failed to fetch bill from BBPS',
-      error.response?.status || 500
-    );
+    // "Invalid ENC request" usually means encryption/IV mismatch – suggest IV and encoding options
+    if (msg && /invalid\s*enc\s*request/i.test(msg)) {
+      const hint =
+        'Try on VPS: BBPS_IV_USE_ZERO=true (or set BBPS_IV to the 32-char hex IV from Bill Avenue). If they expect base64, set BBPS_ENC_REQUEST_BASE64=true.';
+      throw new AppError(`Bill Avenue rejected the request: ${msg}. ${hint}`, 400);
+    }
+    throw new AppError(msg || 'Failed to fetch bill from BBPS', error.response?.status || 500);
   }
   },
 
