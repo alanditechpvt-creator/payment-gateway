@@ -153,7 +153,7 @@ export const bbpsService = {
       process.env.BBPS_ENC_REQUEST_BASE64 === 'true'
         ? Buffer.from(encRequest, 'hex').toString('base64')
         : encRequest;
-    formParams.append('encRequest', encPayload);
+    formParams.append(config.bbps.encParamName, encPayload);
     formParams.append('ver', '1.0');
     formParams.append('instituteId', config.bbps.instituteId);
 
@@ -354,7 +354,14 @@ export const bbpsService = {
       const errCodeMatch = decrypted.match(/<errorCode>(.*?)<\/errorCode>/i);
       const errMsg = errMsgMatch ? errMsgMatch[1].trim() : `BBPS error (code ${responseCode})`;
       const errCode = errCodeMatch ? errCodeMatch[1].trim() : '';
-      logger.error('BBPS API error response', { responseCode, errCode, errMsg });
+      logger.error('BBPS API error response', { responseCode, errCode, errMsg, decryptedPreview: decrypted.slice(0, 600) });
+      // "Invalid ENC request" in decrypted XML = gateway rejected our request payload (XML/form), not encryption
+      if (/invalid\s*enc\s*request/i.test(errMsg)) {
+        throw new AppError(
+          `Bill Avenue says the request content is invalid: "${errMsg}". Ask them for the exact bill fetch XML schema and form parameter name (encRequest vs encData). You can try BBPS_ENC_PARAM_NAME=encData or BBPS_XML_COMPACT=true in .env.`,
+          400
+        );
+      }
       throw new AppError(errMsg, 400);
     }
 

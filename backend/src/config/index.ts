@@ -148,6 +148,8 @@ export const config = {
       keyRaw: process.env.BBPS_KEY_RAW === 'true',
       /** If true, send XML without declaration and minimal whitespace (some gateways are strict). */
       xmlCompact: process.env.BBPS_XML_COMPACT === 'true',
+      /** Form field name for encrypted request: encRequest (default) or encData. Set BBPS_ENC_PARAM_NAME=encData if gateway expects encData. */
+      encParamName: (process.env.BBPS_ENC_PARAM_NAME || 'encRequest').toLowerCase() === 'encdata' ? 'encData' : 'encRequest',
       agentId: process.env.BBPS_AGENT_ID || '',
       instituteId: process.env.BBPS_AGENT_INSTITUTION_ID || process.env.BBPS_INSTITUTE_ID || '',
       instituteName: process.env.BBPS_AGENT_INSTITUTION_NAME || '',
