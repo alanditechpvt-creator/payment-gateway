@@ -318,8 +318,14 @@ export const bbpsService = {
         config.bbps.keyRaw
       );
     } catch (decErr: any) {
-      logger.error('BBPS response decryption failed', { message: decErr?.message });
-      throw new AppError('Invalid or corrupted response from BBPS', 500);
+      const encLen = typeof encResponse === 'string' ? encResponse.length : 0;
+      const looksHex = typeof encResponse === 'string' && /^[0-9a-fA-F]+$/.test(encResponse.trim());
+      logger.error('BBPS response decryption failed', {
+        message: decErr?.message,
+        encResponseLength: encLen,
+        inputLooksHex: looksHex,
+      });
+      throw new AppError('Invalid or corrupted response from BBPS. If encResponse is base64, this build normalizes it; else confirm with Bill Avenue the response encryption (key/IV).', 500);
     }
     logger.info('Decrypted BBPS Response:', decrypted);
 

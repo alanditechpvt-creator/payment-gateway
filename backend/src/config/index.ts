@@ -149,7 +149,7 @@ export const config = {
       /** If true, send XML without declaration and minimal whitespace (some gateways are strict). */
       xmlCompact: process.env.BBPS_XML_COMPACT === 'true',
       agentId: process.env.BBPS_AGENT_ID || '',
-      instituteId: process.env.BBPS_AGENT_INSTITUTION_ID || '',
+      instituteId: process.env.BBPS_AGENT_INSTITUTION_ID || process.env.BBPS_INSTITUTE_ID || '',
       instituteName: process.env.BBPS_AGENT_INSTITUTION_NAME || '',
       paymentChannel: process.env.BBPS_PAYMENT_CHANNEL || 'AGT',
       /** Default biller ID for Credit Card (14 chars). Override per request via params.billerId. */

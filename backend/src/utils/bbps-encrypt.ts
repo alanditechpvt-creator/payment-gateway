@@ -46,7 +46,29 @@ export function encryptBBPSRequest(
 }
 
 /**
+ * Normalize encrypted string to hex. Bill Avenue may return encResponse as base64 or hex.
+ */
+export function normalizedEncryptedToHex(encryptedText: string): string {
+  let raw = (encryptedText || '').trim();
+  // Form-urlencoded can turn base64 '+' into space – restore before decode
+  if (raw.includes(' ')) raw = raw.replace(/ /g, '+');
+  if (/^[0-9a-fA-F]+$/.test(raw) && raw.length >= 32 && raw.length % 2 === 0) {
+    return raw;
+  }
+  // Likely base64 (may include padding =)
+  if (raw.length >= 24 && /^[A-Za-z0-9+/=]+$/.test(raw)) {
+    try {
+      return Buffer.from(raw, 'base64').toString('hex');
+    } catch {
+      // fall through to return raw
+    }
+  }
+  return raw;
+}
+
+/**
  * Decrypts the response from Bill Avenue (same key/IV as encrypt).
+ * encryptedText can be hex or base64 (auto-detected).
  */
 export function decryptBBPSResponse(
   encryptedText: string,
@@ -58,10 +80,11 @@ export function decryptBBPSResponse(
   if (!workingKey) {
     throw new Error('BBPS working key is missing');
   }
+  const hexInput = normalizedEncryptedToHex(encryptedText);
   const key = getKey(workingKey, useRawKey ?? false);
   const iv = resolveIv(ivHex ?? null, useZeroIv ?? false);
   const decipher = crypto.createDecipheriv('aes-128-cbc', key, iv);
-  let decrypted = decipher.update(encryptedText, 'hex', 'utf8');
+  let decrypted = decipher.update(hexInput, 'hex', 'utf8');
   decrypted += decipher.final('utf8');
   return decrypted;
 }
