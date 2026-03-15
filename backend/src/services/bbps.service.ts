@@ -916,14 +916,16 @@ function normalizeBillerRow(row: Record<string, unknown>): { billerId: string; b
     return '';
   };
   return {
-    billerId: get('biller id', 'billerid', 'biller_id', 'Biller ID', 'billerid', 'BillerId'),
-    billerName: get('biller name', 'billername', 'biller_name', 'Biller Name', 'biller name', 'BillerName'),
+    billerId: get('biller id', 'billerid', 'biller_id', 'Biller ID', 'blr_id', 'blr id'),
+    billerName: get('biller name', 'billername', 'biller_name', 'Biller Name', 'blr_name', 'blr name'),
     billerCategory: get(
       'biller category',
       'billercategory',
       'biller_category',
       'Biller Category',
       'category',
+      'blr_category_name',
+      'blr category name',
       'biller category type',
       'biller type',
       'billertype',
@@ -932,6 +934,6 @@ function normalizeBillerRow(row: Record<string, unknown>): { billerId: string; b
       'Biller Type',
       'Category Type'
     ),
-    billerAliasName: get('biller alias', 'billeraliasname', 'alias', 'Biller Alias Name', 'biller alias name'),
+    billerAliasName: get('biller alias', 'billeraliasname', 'alias', 'Biller Alias Name', 'biller alias name', 'blr_name', 'blr name'),
   };
 }
