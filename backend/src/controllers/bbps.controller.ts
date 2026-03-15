@@ -83,6 +83,24 @@ export const bbpsController = {
     }
   },
 
+  /** POST /api/bbps/billers/import – Upload Excel/CSV (e.g. Bharat Connect_biller-info.xlsx), import Credit Card billers into DB. */
+  importBillers: async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const file = req.file as Express.Multer.File & { buffer?: Buffer } | undefined;
+      if (!file?.buffer) {
+        return res.status(400).json({ success: false, error: 'No file uploaded. Use field name "file".' });
+      }
+      const result = await bbpsService.importBillersFromFile(file.buffer, file.originalname || 'file.xlsx');
+      res.json({
+        success: true,
+        ...result,
+        message: `Imported ${result.imported} Credit Card biller(s). ${result.skipped} non–Credit Card row(s) skipped.`,
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+
   /** POST /api/bbps/billers/sync – Fetch billers from Bill Avenue (Biller Info API) and store in DB. Body: { billerIds?: string[] } or uses BBPS_BILLER_IDS. */
   syncBillers: async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {

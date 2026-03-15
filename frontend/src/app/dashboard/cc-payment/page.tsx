@@ -129,6 +129,19 @@ export default function CCPaymentPage() {
     },
   });
 
+  // Import Credit Card billers from Excel (e.g. Bharat Connect_biller-info.xlsx)
+  const importBillersMutation = useMutation({
+    mutationFn: (file: File) => bbpsApi.importBillers(file),
+    onSuccess: (res: any) => {
+      const d = res?.data;
+      toast.success(d?.message || `Imported ${d?.imported ?? 0} biller(s).`);
+      refetchBillers();
+    },
+    onError: (err: any) => {
+      toast.error(err.response?.data?.error || err.message || 'Import failed');
+    },
+  });
+
   const handlePay = () => {
     if (!selectedPG) {
       toast.error('Please select a payment gateway');
@@ -164,10 +177,44 @@ export default function CCPaymentPage() {
             Fetch Bill Details
           </h2>
 
+          {/* Import billers from Excel – when you update Bharat Connect_biller-info.xlsx, upload here to reload */}
+          <div className="p-4 bg-white/5 rounded-xl border border-white/10 space-y-2">
+            <p className="text-sm font-medium text-white/80">Load banks from Excel / CSV</p>
+            <p className="text-xs text-white/50">
+              Upload &quot;Bharat Connect_biller-info.xlsx&quot; (or CSV). Only Credit Card category billers are imported. Update the file and re-upload to refresh the list.
+            </p>
+            <div className="flex flex-wrap items-center gap-2">
+              <input
+                type="file"
+                accept=".xlsx,.xls,.csv"
+                className="hidden"
+                id="biller-file"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) importBillersMutation.mutate(file);
+                  e.target.value = '';
+                }}
+              />
+              <label
+                htmlFor="biller-file"
+                className="inline-flex items-center gap-2 px-4 py-2 bg-primary-500 hover:bg-primary-600 text-white rounded-lg text-sm font-medium cursor-pointer disabled:opacity-50"
+              >
+                {importBillersMutation.isPending ? (
+                  <span className="animate-pulse">Importing…</span>
+                ) : (
+                  'Choose file & import'
+                )}
+              </label>
+              {billers.length > 0 && (
+                <span className="text-xs text-white/50">{billers.length} bank(s) loaded</span>
+              )}
+            </div>
+          </div>
+
           <form onSubmit={handleFetchBill} className="space-y-4">
             <div>
               <label className="block text-sm font-medium text-white/70 mb-2">
-                Select your bank (biller)
+                1. Select your bank (biller)
               </label>
               <div className="relative">
                 <BuildingLibraryIcon className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-white/40" />
@@ -240,7 +287,7 @@ export default function CCPaymentPage() {
 
             <div>
               <label className="block text-sm font-medium text-white/70 mb-2">
-                Registered Mobile Number
+                2. Registered Mobile Number
               </label>
               <div className="relative">
                 <PhoneIcon className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-white/40" />
@@ -257,7 +304,7 @@ export default function CCPaymentPage() {
 
             <div>
               <label className="block text-sm font-medium text-white/70 mb-2">
-                Last 4 Digits of Card (Optional)
+                3. Last 4 Digits of Card (Optional)
               </label>
               <div className="relative">
                 <CreditCardIcon className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-white/40" />

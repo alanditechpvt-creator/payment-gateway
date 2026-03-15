@@ -567,6 +567,90 @@ ${ids.map((id) => `<billerId>${id}</billerId>`).join('\n')}
   },
 
   /**
+   * Import billers from Excel/CSV file (e.g. Bharat Connect_biller-info.xlsx).
+   * Filters by Credit Card category and upserts into BbpsBiller.
+   * When you update the file, re-upload or re-call this to reload.
+   */
+  async importBillersFromFile(buffer: Buffer, filename: string): Promise<{ imported: number; skipped: number; errors: string[] }> {
+    const ext = (filename || '').toLowerCase().split('.').pop();
+    let rows: Record<string, unknown>[] = [];
+    try {
+      if (ext === 'csv') {
+        const str = buffer.toString('utf8');
+        const lines = str.split(/\r?\n/).filter((l) => l.trim());
+        if (lines.length < 2) throw new AppError('CSV must have header row and at least one data row', 400);
+        const headers = parseCSVLine(lines[0]);
+        rows = lines.slice(1).map((line) => {
+          const values = parseCSVLine(line);
+          const obj: Record<string, unknown> = {};
+          headers.forEach((h, i) => {
+            obj[h] = values[i] ?? '';
+          });
+          return obj;
+        });
+      } else {
+        const XLSX = require('xlsx');
+        const wb = XLSX.read(buffer, { type: 'buffer', cellDates: false });
+        const firstSheet = wb.SheetNames[0];
+        if (!firstSheet) throw new AppError('Excel file has no sheet', 400);
+        rows = XLSX.utils.sheet_to_json(wb.Sheets[firstSheet]) as Record<string, unknown>[];
+      }
+    } catch (e: any) {
+      if (e instanceof AppError) throw e;
+      logger.error('Parse biller file failed', { message: e?.message });
+      throw new AppError('Invalid file. Use Excel (.xlsx, .xls) or CSV with header row.', 400);
+    }
+    const normalized = rows.map((r) => normalizeBillerRow(r));
+    const creditCardOnly = normalized.filter((r) => {
+      const cat = (r.billerCategory || '').toString().toLowerCase();
+      return cat.includes('credit');
+    });
+    const TOP_BILLER_NAMES = ['axis', 'icici', 'hdfc', 'sbi'];
+    const TOP_ORDER: Record<string, number> = { sbi: 1, hdfc: 2, icici: 3, axis: 4 };
+    let imported = 0;
+    const errors: string[] = [];
+    for (const r of creditCardOnly) {
+      const id = String(r.billerId || '').trim().slice(0, 14);
+      if (id.length !== 14) {
+        errors.push(`Invalid or missing billerId: ${id || '(empty)'}`);
+        continue;
+      }
+      const name = (r.billerName || r.billerAliasName || id).toString().trim() || id;
+      const category = (r.billerCategory || '').toString().trim();
+      const alias = (r.billerAliasName || '').toString().trim() || null;
+      const nameLower = name.toLowerCase();
+      const isTop = TOP_BILLER_NAMES.some((t) => nameLower.includes(t));
+      const sortOrder = isTop ? (TOP_ORDER[TOP_BILLER_NAMES.find((t) => nameLower.includes(t))!] ?? 50) : 100;
+      try {
+        await prisma.bbpsBiller.upsert({
+          where: { billerId: id },
+          create: {
+            billerId: id,
+            billerName: name,
+            billerAliasName: alias,
+            billerCategory: category,
+            isTopBiller: isTop,
+            sortOrder,
+          },
+          update: {
+            billerName: name,
+            billerAliasName: alias,
+            billerCategory: category,
+            isTopBiller: isTop,
+            sortOrder,
+          },
+        });
+        imported++;
+      } catch (e: any) {
+        errors.push(`Row ${id}: ${e?.message || 'DB error'}`);
+      }
+    }
+    const skipped = normalized.length - creditCardOnly.length;
+    logger.info('Biller import from file', { filename, imported, skipped, errors: errors.length });
+    return { imported, skipped, errors };
+  },
+
+  /**
    * Fetch a single biller from Bill Avenue (Biller Info API) and store in DB.
    * Use when user/admin adds a biller by 14-char ID so we can show it in the dropdown.
    */
@@ -779,5 +863,43 @@ function parseXMLResponse(xml: string): any {
     billNumber: getTagValue('billNumber') || getTagValue('billReferenceNumber'),
     customerName: getTagValue('customerName'),
     cardLast4: getTagValue('cardLast4') || getTagValue('last4Digits'),
+  };
+}
+
+/** Parse a single CSV line (handles quoted fields) */
+function parseCSVLine(line: string): string[] {
+  const out: string[] = [];
+  let cur = '';
+  let inQuotes = false;
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    if (c === '"') {
+      inQuotes = !inQuotes;
+    } else if ((c === ',' && !inQuotes) || c === '\t') {
+      out.push(cur.trim());
+      cur = '';
+    } else {
+      cur += c;
+    }
+  }
+  out.push(cur.trim());
+  return out;
+}
+
+/** Normalize Excel/CSV row to { billerId, billerName, billerCategory, billerAliasName } using common column names */
+function normalizeBillerRow(row: Record<string, unknown>): { billerId: string; billerName: string; billerCategory: string; billerAliasName: string } {
+  const key = (v: string) => v.toLowerCase().replace(/\s+/g, '');
+  const get = (...names: string[]) => {
+    for (const n of names) {
+      const k = Object.keys(row).find((r) => key(r) === key(n));
+      if (k != null && row[k] != null) return String(row[k]).trim();
+    }
+    return '';
+  };
+  return {
+    billerId: get('biller id', 'billerid', 'biller_id', 'Biller ID'),
+    billerName: get('biller name', 'billername', 'biller_name', 'Biller Name'),
+    billerCategory: get('biller category', 'billercategory', 'biller_category', 'Biller Category', 'category'),
+    billerAliasName: get('biller alias', 'billeraliasname', 'alias', 'Biller Alias Name'),
   };
 }

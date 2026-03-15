@@ -1,4 +1,8 @@
 {
+  "scripts": {
+    "push": "powershell -ExecutionPolicy Bypass -File scripts/git-push.ps1",
+    "push:sh": "bash scripts/git-push.sh"
+  },
   "devDependencies": {
     "playwright": "^1.35.0"
   }

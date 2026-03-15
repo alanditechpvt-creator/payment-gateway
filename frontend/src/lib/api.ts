@@ -186,6 +186,14 @@ export const configApi = {
 export const bbpsApi = {
   getBillers: (params?: { category?: string }) =>
     api.get('/bbps/billers', { params: params?.category ? { category: params.category } : {} }),
+  /** Import Credit Card billers from Excel/CSV (e.g. Bharat Connect_biller-info.xlsx). */
+  importBillers: (file: File) => {
+    const form = new FormData();
+    form.append('file', file);
+    return api.post('/bbps/billers/import', form, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+  },
   syncBillers: (billerIds?: string[]) =>
     api.post('/bbps/billers/sync', billerIds != null ? { billerIds } : {}),
   /** Fetch one biller from Bill Avenue by 14-char ID and store in DB. */
