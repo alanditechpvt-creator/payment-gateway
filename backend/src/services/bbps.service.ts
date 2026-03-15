@@ -226,24 +226,24 @@ export const bbpsService = {
       logger.info('BBPS API Response Data:', JSON.stringify(data, null, 2));
     }
 
-    // Bill Avenue may return encResponse/enc_response/encData in form, or raw hex body
+    // Bill Avenue may return encResponse/enc_response/encData in form, or raw hex/base64 body
     const strData = typeof data === 'string' ? data.trim() : '';
     const objData = typeof data === 'object' && data && !Array.isArray(data) ? data : null;
-    // Encrypted payload: form keys, raw hex body, or base64 body (convert to hex for decrypt)
+    const fromObj = (key: string) => objData && (objData[key] as string);
+    const nested = objData && (typeof (objData.response ?? objData.data ?? objData.result) === 'object'
+      ? ((objData.response ?? objData.data ?? objData.result) as Record<string, unknown>)
+      : null);
     const rawHex =
       strData && /^[0-9a-fA-F]+$/.test(strData) && strData.length >= 32 && strData.length % 2 === 0 ? strData : null;
     const base64Decoded =
       strData &&
-      strData.length >= 32 &&
-      /^[A-Za-z0-9+/]+=*$/.test(strData) &&
-      strData.length % 4 === 0
-        ? Buffer.from(strData, 'base64').toString('hex')
+      strData.length >= 24 &&
+      /^[A-Za-z0-9+/=]+$/.test(strData)
+        ? (() => { try { return Buffer.from(strData.replace(/ /g, '+'), 'base64').toString('hex'); } catch { return null; } })()
         : null;
     const encResponse =
-      (objData && (objData.encResponse as string)) ??
-      (objData && (objData.enc_response as string)) ??
-      (objData && (objData.encData as string)) ??
-      (objData && (objData.enc_data as string)) ??
+      fromObj('encResponse') ?? fromObj('enc_response') ?? fromObj('encData') ?? fromObj('enc_data') ??
+      (nested && (nested.encResponse ?? nested.enc_response ?? nested.encData) as string) ??
       rawHex ??
       (base64Decoded && base64Decoded.length >= 32 ? base64Decoded : null);
 
@@ -307,7 +307,7 @@ export const bbpsService = {
       throw new AppError((msg as string) || 'Invalid response from BBPS', 500);
     }
 
-    // Decrypt response (same IV as encrypt)
+    // Decrypt response (same key/IV as request). Some gateways use raw key for request but MD5(key) for response – retry with MD5 if needed.
     let decrypted: string;
     try {
       decrypted = decryptBBPSResponse(
@@ -317,15 +317,32 @@ export const bbpsService = {
         config.bbps.ivUseZero,
         config.bbps.keyRaw
       );
-    } catch (decErr: any) {
-      const encLen = typeof encResponse === 'string' ? encResponse.length : 0;
-      const looksHex = typeof encResponse === 'string' && /^[0-9a-fA-F]+$/.test(encResponse.trim());
-      logger.error('BBPS response decryption failed', {
-        message: decErr?.message,
-        encResponseLength: encLen,
-        inputLooksHex: looksHex,
-      });
-      throw new AppError('Invalid or corrupted response from BBPS. If encResponse is base64, this build normalizes it; else confirm with Bill Avenue the response encryption (key/IV).', 500);
+    } catch (decErr1: any) {
+      if (config.bbps.keyRaw) {
+        try {
+          decrypted = decryptBBPSResponse(
+            encResponse,
+            config.bbps.workingKey,
+            config.bbps.iv,
+            config.bbps.ivUseZero,
+            false
+          );
+          logger.info('BBPS response decrypted using MD5 key (request used raw key)');
+        } catch (decErr2: any) {
+          logger.error('BBPS response decryption failed (tried raw key and MD5 key)', {
+            first: decErr1?.message,
+            second: decErr2?.message,
+            encResponseLength: typeof encResponse === 'string' ? encResponse.length : 0,
+          });
+          throw new AppError('Invalid or corrupted response from BBPS. Confirm with Bill Avenue: response encryption key (raw vs MD5) and IV.', 500);
+        }
+      } else {
+        logger.error('BBPS response decryption failed', {
+          message: decErr1?.message,
+          encResponseLength: typeof encResponse === 'string' ? encResponse.length : 0,
+        });
+        throw new AppError('Invalid or corrupted response from BBPS. Confirm with Bill Avenue the response encryption (key/IV).', 500);
+      }
     }
     logger.info('Decrypted BBPS Response:', decrypted);
 
