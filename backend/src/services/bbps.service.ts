@@ -79,7 +79,10 @@ export const bbpsService = {
   // Build XML request per BBPS doc: agentDeviceInfo, agentId, billerId, customerInfo, inputParams (order matters)
   // Credit Card biller requires inputParams: Registered Mobile No, Last 4 Digits of Credit Card
   const agentId = String(config.bbps.agentId || '').trim().slice(0, 20).padEnd(20, '0');
-  const xml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+  const xmlCompactBody = `<billFetchRequest><agentDeviceInfo><ip>72.61.254.18</ip><initChannel>${config.bbps.paymentChannel}</initChannel><mac>A1-B2-C3-D4-E5-F6</mac></agentDeviceInfo><agentId>${agentId}</agentId><billerId>${billerId}</billerId><customerInfo><customerMobile>${params.mobileNumber}</customerMobile></customerInfo><inputParams><input><paramName>Registered Mobile No</paramName><paramValue>${params.mobileNumber}</paramValue></input><input><paramName>Last 4 Digits of Credit Card</paramName><paramValue>${params.cardLast4 || '0000'}</paramValue></input></inputParams></billFetchRequest>`;
+  const xml = config.bbps.xmlCompact
+    ? xmlCompactBody
+    : `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <billFetchRequest>
 <agentDeviceInfo>
 <ip>72.61.254.18</ip>
@@ -105,12 +108,13 @@ export const bbpsService = {
 
   logger.info('BBPS Bill Fetch Request XML:', xml);
 
-  // Encrypt the XML (IV from config, or zero IV if BBPS_IV_USE_ZERO=true)
+  // Encrypt the XML (IV from config; BBPS_KEY_RAW=true uses working key as 16-byte key instead of MD5)
   const encRequest = encryptBBPSRequest(
     xml,
     config.bbps.workingKey,
     config.bbps.iv,
-    config.bbps.ivUseZero
+    config.bbps.ivUseZero,
+    config.bbps.keyRaw
   );
   
   logger.info('BBPS Encrypted Request:', { length: encRequest.length, sample: encRequest.substring(0, 80) + '...' });
@@ -310,7 +314,8 @@ export const bbpsService = {
         encResponse,
         config.bbps.workingKey,
         config.bbps.iv,
-        config.bbps.ivUseZero
+        config.bbps.ivUseZero,
+        config.bbps.keyRaw
       );
     } catch (decErr: any) {
       logger.error('BBPS response decryption failed', { message: decErr?.message });
@@ -377,10 +382,10 @@ export const bbpsService = {
       data: error.response?.data,
       requestUrl: error.config?.url,
     });
-    // "Invalid ENC request" usually means encryption/IV mismatch – suggest IV and encoding options
+    // "Invalid ENC request" usually means encryption/IV/key or format mismatch
     if (msg && /invalid\s*enc\s*request/i.test(msg)) {
       const hint =
-        'Try on VPS: BBPS_IV_USE_ZERO=true (or set BBPS_IV to the 32-char hex IV from Bill Avenue). If they expect base64, set BBPS_ENC_REQUEST_BASE64=true.';
+        'Try in .env: BBPS_IV_USE_ZERO=true, or BBPS_IV=<32-char-hex>, or BBPS_KEY_RAW=true (use key as 16 bytes), or BBPS_ENC_REQUEST_BASE64=true, or BBPS_XML_COMPACT=true. Confirm with Bill Avenue which key/IV they use.';
       throw new AppError(`Bill Avenue rejected the request: ${msg}. ${hint}`, 400);
     }
     throw new AppError(msg || 'Failed to fetch bill from BBPS', error.response?.status || 500);
@@ -459,7 +464,8 @@ ${ids.map((id) => `<billerId>${id}</billerId>`).join('\n')}
       xml,
       config.bbps.workingKey,
       config.bbps.iv,
-      config.bbps.ivUseZero
+      config.bbps.ivUseZero,
+      config.bbps.keyRaw
     );
     const requestId = generateBBPSRequestId();
     const params = new URLSearchParams();
@@ -520,7 +526,8 @@ ${ids.map((id) => `<billerId>${id}</billerId>`).join('\n')}
           encResponse,
           config.bbps.workingKey,
           config.bbps.iv,
-          config.bbps.ivUseZero
+          config.bbps.ivUseZero,
+          config.bbps.keyRaw
         );
       } catch (e) {
         logger.error('Biller Info decryption failed', { message: (e as Error)?.message });

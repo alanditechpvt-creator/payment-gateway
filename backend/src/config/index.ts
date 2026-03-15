@@ -144,6 +144,10 @@ export const config = {
       iv: process.env.BBPS_IV || null,
       /** If true, use zero IV when BBPS_IV is not set (fixes "Invalid ENC request" for some Bill Avenue setups). */
       ivUseZero: process.env.BBPS_IV_USE_ZERO === 'true',
+      /** If true, use working key as 16-byte key (padded/trimmed) instead of MD5(workingKey). Try if MD5 key fails. */
+      keyRaw: process.env.BBPS_KEY_RAW === 'true',
+      /** If true, send XML without declaration and minimal whitespace (some gateways are strict). */
+      xmlCompact: process.env.BBPS_XML_COMPACT === 'true',
       agentId: process.env.BBPS_AGENT_ID || '',
       instituteId: process.env.BBPS_AGENT_INSTITUTION_ID || '',
       instituteName: process.env.BBPS_AGENT_INSTITUTION_NAME || '',
