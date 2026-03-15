@@ -157,12 +157,19 @@ export const bbpsService = {
     formParams.append('ver', '1.0');
     formParams.append('instituteId', config.bbps.instituteId);
 
+    let billFetchUrl = config.bbps.endpoints.billFetch;
+    if (process.env.BBPS_BILL_FETCH_TRAILING_SLASH === 'true' && !billFetchUrl.endsWith('/')) {
+      billFetchUrl = billFetchUrl + '/';
+    }
+
     const response = await axios.post(
-      config.bbps.endpoints.billFetch,
+      billFetchUrl,
       formParams.toString(),
       {
         headers: {
           'Content-Type': 'application/x-www-form-urlencoded',
+          'Accept': 'application/xml, text/xml, */*',
+          'User-Agent': 'PaymentGateway-BBPS/1.0',
         },
       }
     );
