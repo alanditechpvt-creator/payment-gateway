@@ -12,7 +12,8 @@
     "db:push": "prisma db push",
     "db:migrate": "prisma migrate dev",
     "db:seed": "ts-node prisma/seed.ts",
-    "db:studio": "prisma studio"
+    "db:studio": "prisma studio",
+    "import-billers": "ts-node --transpile-only src/scripts/import-billers.ts"
   },
   "prisma": {
     "seed": "ts-node prisma/seed.ts"

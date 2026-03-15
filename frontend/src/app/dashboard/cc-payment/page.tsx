@@ -32,7 +32,9 @@ export default function CCPaymentPage() {
     queryKey: ['bbps-billers', 'CREDIT_CARD'],
     queryFn: () => bbpsApi.getBillers({ category: 'CREDIT_CARD' }),
   });
-  const billers = Array.isArray(billersData?.data?.data) ? billersData.data.data : [];
+  // Support both { data: { data: [...] } } and { data: [...] } from API
+  const raw = billersData?.data;
+  const billers = Array.isArray(raw?.data) ? raw.data : Array.isArray(raw) ? raw : [];
   const autoSyncDone = useRef(false);
 
   // When page loads and biller list is empty, try to sync once (uses BBPS_BILLER_IDS on server)
@@ -135,6 +137,7 @@ export default function CCPaymentPage() {
     onSuccess: (res: any) => {
       const d = res?.data;
       toast.success(d?.message || `Imported ${d?.imported ?? 0} biller(s).`);
+      queryClient.invalidateQueries({ queryKey: ['bbps-billers', 'CREDIT_CARD'] });
       refetchBillers();
     },
     onError: (err: any) => {
@@ -245,7 +248,10 @@ export default function CCPaymentPage() {
               {billers.length === 0 && (
                 <div className="mt-3 p-4 bg-white/5 rounded-xl border border-white/10 space-y-3">
                   <p className="text-sm text-white/70">
-                    No billers in list. Add billers by calling Bill Avenue Biller Info API:
+                    No banks in list. Use &quot;Choose file & import&quot; above with Bharat Connect_biller-info.xlsx, or on VPS run from backend folder: <code className="text-xs bg-white/10 px-1 rounded">npm run import-billers -- /path/to/file.xlsx</code>
+                  </p>
+                  <p className="text-sm text-white/70">
+                    Alternatively, add a biller by Bill Avenue Biller Info API:
                   </p>
                   <div className="flex gap-2">
                     <input
