@@ -606,9 +606,23 @@ ${ids.map((id) => `<billerId>${id}</billerId>`).join('\n')}
       throw new AppError('Invalid file. Use Excel (.xlsx, .xls) or CSV with header row.', 400);
     }
     const normalized = rows.map((r) => normalizeBillerRow(r));
+    // Log first row keys and category when debugging empty import (e.g. column name mismatch)
+    if (normalized.length > 0) {
+      const first = normalized[0];
+      const firstRaw = rows[0] as Record<string, unknown>;
+      logger.info('Biller file sample', {
+        headerKeys: Object.keys(firstRaw || {}),
+        firstRowCategory: first?.billerCategory || '(empty)',
+        firstRowName: (first?.billerName || '').slice(0, 40),
+      });
+    }
     const creditCardOnly = normalized.filter((r) => {
-      const cat = (r.billerCategory || '').toString().toLowerCase();
-      return cat.includes('credit');
+      const cat = (r.billerCategory || '').toString().toLowerCase().trim();
+      const name = ((r.billerName || '') + ' ' + (r.billerAliasName || '')).toLowerCase();
+      // Match category containing "credit" or "card" (e.g. "Credit Card"), or "cc"; or if category empty, name contains "credit card"
+      if (cat.includes('credit') || cat.includes('card') || cat === 'cc') return true;
+      if (!cat && (name.includes('credit card') || name.includes('creditcard'))) return true;
+      return false;
     });
     const TOP_BILLER_NAMES = ['axis', 'icici', 'hdfc', 'sbi'];
     const TOP_ORDER: Record<string, number> = { sbi: 1, hdfc: 2, icici: 3, axis: 4 };
@@ -902,9 +916,22 @@ function normalizeBillerRow(row: Record<string, unknown>): { billerId: string; b
     return '';
   };
   return {
-    billerId: get('biller id', 'billerid', 'biller_id', 'Biller ID'),
-    billerName: get('biller name', 'billername', 'biller_name', 'Biller Name'),
-    billerCategory: get('biller category', 'billercategory', 'biller_category', 'Biller Category', 'category'),
-    billerAliasName: get('biller alias', 'billeraliasname', 'alias', 'Biller Alias Name'),
+    billerId: get('biller id', 'billerid', 'biller_id', 'Biller ID', 'billerid', 'BillerId'),
+    billerName: get('biller name', 'billername', 'biller_name', 'Biller Name', 'biller name', 'BillerName'),
+    billerCategory: get(
+      'biller category',
+      'billercategory',
+      'biller_category',
+      'Biller Category',
+      'category',
+      'biller category type',
+      'biller type',
+      'billertype',
+      'type',
+      'Category',
+      'Biller Type',
+      'Category Type'
+    ),
+    billerAliasName: get('biller alias', 'billeraliasname', 'alias', 'Biller Alias Name', 'biller alias name'),
   };
 }
