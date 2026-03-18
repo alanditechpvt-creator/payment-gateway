@@ -144,35 +144,38 @@ export const bbpsService = {
   }
 
   try {
-    // Bill Avenue required POST params: accessCode, requestId, encRequest, ver, instituteId
-    const formParams = new URLSearchParams();
-    formParams.append('accessCode', config.bbps.accessCode);
-    formParams.append('requestId', requestId);
-    // Some setups expect base64-encoded encRequest (set BBPS_ENC_REQUEST_BASE64=true)
+    // Bill Avenue required params: accessCode, requestId, encRequest/encData, ver, instituteId
+    // Provider may require these params in query string (per their cURL) or in x-www-form-urlencoded body.
     const encPayload =
       process.env.BBPS_ENC_REQUEST_BASE64 === 'true'
         ? Buffer.from(encRequest, 'hex').toString('base64')
         : encRequest;
-    formParams.append(config.bbps.encParamName, encPayload);
-    formParams.append('ver', '1.0');
-    formParams.append('instituteId', config.bbps.instituteId);
 
     let billFetchUrl = config.bbps.endpoints.billFetch;
     if (process.env.BBPS_BILL_FETCH_TRAILING_SLASH === 'true' && !billFetchUrl.endsWith('/')) {
       billFetchUrl = billFetchUrl + '/';
     }
 
-    const response = await axios.post(
-      billFetchUrl,
-      formParams.toString(),
-      {
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded',
-          'Accept': 'application/xml, text/xml, */*',
-          'User-Agent': 'PaymentGateway-BBPS/1.0',
-        },
-      }
-    );
+    const baseHeaders = {
+      'Accept': 'application/xml, text/xml, */*',
+      'User-Agent': 'PaymentGateway-BBPS/1.0',
+    } as Record<string, string>;
+
+    const paramsObj: Record<string, string> = {
+      accessCode: config.bbps.accessCode,
+      requestId,
+      ver: '1.0',
+      instituteId: config.bbps.instituteId,
+      [config.bbps.encParamName]: encPayload,
+    };
+
+    const response = config.bbps.billFetchUseQueryParams
+      ? await axios.post(billFetchUrl, null, { params: paramsObj, headers: baseHeaders })
+      : await axios.post(
+          billFetchUrl,
+          new URLSearchParams(paramsObj).toString(),
+          { headers: { ...baseHeaders, 'Content-Type': 'application/x-www-form-urlencoded' } }
+        );
 
     // Detect HTML error pages (e.g. Bill Avenue "Access Denied" / IP or credential rejection)
     const raw = response.data;
