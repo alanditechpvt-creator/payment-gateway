@@ -418,6 +418,10 @@ export const bbpsService = {
       },
     };
   } catch (error: any) {
+    // Preserve AppError thrown from BBPS decrypted XML parsing (responseCode != 000, etc.)
+    if (error instanceof AppError) {
+      throw error;
+    }
     const status = error.response?.status;
     const msg = (error.response?.data?.message ?? error.response?.data ?? error.message)?.toString?.() || error.message;
     logger.error('BBPS API call failed - Full Error:', {
