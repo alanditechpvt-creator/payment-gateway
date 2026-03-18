@@ -146,8 +146,12 @@ export const bbpsService = {
   try {
     // Bill Avenue required params: accessCode, requestId, encRequest/encData, ver, instituteId
     // Provider may require these params in query string (per their cURL) or in x-www-form-urlencoded body.
-    const encPayload =
-      process.env.BBPS_ENC_REQUEST_BASE64 === 'true'
+    // Bill Avenue normally expects encrypted payload in encRequest/encData.
+    // For troubleshooting only: send plain XML as-is (will likely be rejected by provider).
+    const usePlain = process.env.BBPS_PLAIN_XML === 'true';
+    const encPayload = usePlain
+      ? xml
+      : process.env.BBPS_ENC_REQUEST_BASE64 === 'true'
         ? Buffer.from(encRequest, 'hex').toString('base64')
         : encRequest;
 
@@ -889,6 +893,8 @@ ${ids.map((id) => `<billerId>${id}</billerId>`).join('\n')}
 function generateBBPSRequestId(): string {
   const alphanumeric = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz';
   let random = '';
+  // Bill Avenue expects requestId to be exactly 35 characters (alphanumeric).
+  // We use 27 random + 8 timestamp (YDDDhhmm) = 35 total.
   for (let i = 0; i < 27; i++) {
     random += alphanumeric[Math.floor(Math.random() * alphanumeric.length)];
   }
@@ -898,7 +904,7 @@ function generateBBPSRequestId(): string {
   const DDD = String(Math.floor((now.getTime() - start.getTime()) / (1000 * 60 * 60 * 24))).padStart(3, '0');
   const hh = String(now.getHours()).padStart(2, '0');
   const mm = String(now.getMinutes()).padStart(2, '0');
-  return `${random};${Y}${DDD}${hh}${mm}`;
+  return `${random}${Y}${DDD}${hh}${mm}`;
 }
 
 /**
