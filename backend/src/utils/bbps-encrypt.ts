@@ -11,7 +11,13 @@ const ZERO_IV = Buffer.alloc(16, 0);
 
 function getKey(workingKey: string, useRawKey?: boolean): Buffer {
   if (useRawKey) {
-    const buf = Buffer.from(workingKey, 'utf8');
+    // Bill Avenue often provides workingKey as 32-char hex (16 bytes). Use it as raw bytes if it matches.
+    const wk = (workingKey || '').trim();
+    if (/^[0-9a-fA-F]{32}$/.test(wk)) {
+      return Buffer.from(wk, 'hex');
+    }
+    // Fallback: treat as UTF-8 and pad/trim to 16 bytes
+    const buf = Buffer.from(wk, 'utf8');
     if (buf.length >= 16) return buf.subarray(0, 16);
     const out = Buffer.alloc(16, 0);
     buf.copy(out);
