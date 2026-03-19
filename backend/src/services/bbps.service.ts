@@ -173,13 +173,35 @@ export const bbpsService = {
       [config.bbps.encParamName]: encPayload,
     };
 
-    const response = config.bbps.billFetchUseQueryParams
-      ? await axios.post(billFetchUrl, null, { params: paramsObj, headers: baseHeaders })
-      : await axios.post(
-          billFetchUrl,
-          new URLSearchParams(paramsObj).toString(),
-          { headers: { ...baseHeaders, 'Content-Type': 'application/x-www-form-urlencoded' } }
-        );
+    const bodyEncoded = new URLSearchParams(paramsObj).toString();
+    const urlParamLength = bodyEncoded.length + billFetchUrl.length + 2;
+    logger.info('BBPS billFetch transport', {
+      useQueryParams: config.bbps.billFetchUseQueryParams,
+      encParamName: config.bbps.encParamName,
+      approxUrlLength: urlParamLength,
+    });
+
+    let response;
+    if (config.bbps.billFetchUseQueryParams) {
+      try {
+        response = await axios.post(billFetchUrl, null, { params: paramsObj, headers: baseHeaders });
+      } catch (e: any) {
+        // If provider edge rejects long URLs / query-param mode, retry as form-urlencoded body.
+        const status = e?.response?.status;
+        if (status === 404) {
+          logger.warn('BBPS billFetch query-param mode returned 404; retrying with form-urlencoded body');
+          response = await axios.post(billFetchUrl, bodyEncoded, {
+            headers: { ...baseHeaders, 'Content-Type': 'application/x-www-form-urlencoded' },
+          });
+        } else {
+          throw e;
+        }
+      }
+    } else {
+      response = await axios.post(billFetchUrl, bodyEncoded, {
+        headers: { ...baseHeaders, 'Content-Type': 'application/x-www-form-urlencoded' },
+      });
+    }
 
     // Detect HTML error pages (e.g. Bill Avenue "Access Denied" / IP or credential rejection)
     const raw = response.data;
