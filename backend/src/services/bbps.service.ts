@@ -132,6 +132,10 @@ export const bbpsService = {
       timestamp: new Date().toISOString(),
       url: config.bbps.endpoints.billFetch,
       credentialsLoaded: hasCreds,
+      requestId,
+      requestIdLength: String(requestId || '').length,
+      encParamName: config.bbps.encParamName,
+      useQueryParams: config.bbps.billFetchUseQueryParams,
       xml: xml,
       encRequestLength: encRequest.length,
       encRequestSample: encRequest.substring(0, 200),
@@ -390,7 +394,7 @@ export const bbpsService = {
       const errCodeMatch = decrypted.match(/<errorCode>(.*?)<\/errorCode>/i);
       const errMsg = errMsgMatch ? errMsgMatch[1].trim() : `BBPS error (code ${responseCode})`;
       const errCode = errCodeMatch ? errCodeMatch[1].trim() : '';
-      logger.error('BBPS API error response', { responseCode, errCode, errMsg, decryptedPreview: decrypted.slice(0, 600) });
+      logger.error('BBPS API error response', { responseCode, errCode, errMsg, decryptedPreview: decrypted.slice(0, 1600) });
       // "Invalid ENC request" in decrypted XML = gateway rejected our request payload (XML/form), not encryption
       if (/invalid\s*enc\s*request/i.test(errMsg)) {
         throw new AppError(
